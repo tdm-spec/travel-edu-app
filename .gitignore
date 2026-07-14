@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 .next
 node_modules
 out
@@ -21,9 +20,3 @@ dist
 .npm-cache
 work
 outputs
-=======
-.env.local
-.next
-node_modules
-.vercel
->>>>>>> 9332d11ad6d9bae5b5158d8e9c864c59dc31387d

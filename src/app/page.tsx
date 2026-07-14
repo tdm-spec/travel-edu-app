@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { onAuthStateChanged, User } from "firebase/auth";
 import {
   collection,
   onSnapshot,
@@ -8,7 +9,6 @@ import {
   query,
   Timestamp
 } from "firebase/firestore";
-import { onAuthStateChanged, User } from "firebase/auth";
 import { BookOpen, GraduationCap, Menu, Search } from "lucide-react";
 import { AdminForm } from "@/components/AdminForm";
 import { ContentModal } from "@/components/ContentModal";
@@ -20,8 +20,6 @@ import { MaterialCard } from "@/components/MaterialCard";
 import { auth, db } from "@/lib/firebase";
 import { demoMaterials, filterOptions } from "@/lib/materials";
 import type { ContentTab, FilterState, Material } from "@/types/material";
-
-export const runtime = "edge";
 
 const emptyFilters: FilterState = {
   topics: [],
@@ -102,7 +100,9 @@ export default function Home() {
   }, []);
 
   const visibleMaterials = useMemo(() => {
-    const tabMaterials = materials.filter((material) => material.tab === activeTab);
+    const tabMaterials = materials.filter(
+      (material) => material.tab === activeTab
+    );
     const filteredMaterials = filterMaterials(tabMaterials, filters);
     const normalizedSearch = search.trim().toLowerCase();
 
