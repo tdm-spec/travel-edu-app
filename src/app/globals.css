@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -22,4 +24,42 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+.ticket-card {
+  position: relative;
+  isolation: isolate;
+}
+
+.ticket-card::before,
+.ticket-card::after {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  width: 14px;
+  height: 100%;
+  content: "";
+  pointer-events: none;
+  background-image: radial-gradient(circle, #f8fafc 0 5px, transparent 5.5px);
+  background-position: center top;
+  background-size: 14px 24px;
+  background-repeat: repeat-y;
+}
+
+.ticket-card::before {
+  left: -7px;
+}
+
+.ticket-card::after {
+  right: -7px;
+}
+
+.ticket-barcode {
+  background-image: repeating-linear-gradient(
+    90deg,
+    #0f172a 0 2px,
+    transparent 2px 4px,
+    #0f172a 4px 5px,
+    transparent 5px 8px
+  );
 }

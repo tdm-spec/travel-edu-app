@@ -1,0 +1,77 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email == 'psnkzeducation@gmail.com';
+    }
+
+    function isActiveUser() {
+      return isAdmin()
+        || (
+          signedIn()
+          && exists(/databases/$(database)/documents/accessUsers/$(request.auth.uid))
+          && get(/databases/$(database)/documents/accessUsers/$(request.auth.uid)).data.active == true
+          && get(/databases/$(database)/documents/accessUsers/$(request.auth.uid)).data.archived != true
+        );
+    }
+
+    match /materials/{materialId} {
+      allow read: if isActiveUser();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (
+          isActiveUser()
+          &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views'])
+          && request.resource.data.views == resource.data.get('views', 0) + 1
+        );
+    }
+
+    match /tracks/{trackId} {
+      allow read: if isActiveUser();
+      allow write: if isAdmin();
+    }
+
+    match /materialViews/{viewId} {
+      allow get: if isActiveUser();
+      allow list: if false;
+      allow create: if isActiveUser()
+        && request.resource.data.keys().hasOnly([
+          'materialId',
+          'deviceId',
+          'createdAt'
+        ])
+        && request.resource.data.materialId is string
+        && request.resource.data.deviceId is string
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /accessUsers/{userId} {
+      allow get: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow list, create, update, delete: if isAdmin();
+    }
+
+    match /loginEvents/{eventId} {
+      allow read: if isAdmin();
+      allow create: if isActiveUser()
+        && request.resource.data.keys().hasOnly([
+          'uid',
+          'login',
+          'createdAt',
+          'userAgent'
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.login is string
+        && request.resource.data.userAgent is string
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}

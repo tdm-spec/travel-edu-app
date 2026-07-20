@@ -39,5 +39,11 @@ export const analyticsPromise: Promise<Analytics | null> =
     ? isSupported().then((supported) => (supported ? getAnalytics(app) : null))
     : Promise.resolve(null);
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope("email");
+googleProvider.addScope("profile");
+googleProvider.setCustomParameters({
+  prompt: "select_account"
+});
+
 export const ADMIN_EMAIL =
-  process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "admin@poehali.travel";
+  process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "psnkzeducation@gmail.com";

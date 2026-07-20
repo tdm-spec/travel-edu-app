@@ -1,5 +1,6 @@
 export type MaterialType = "video" | "file";
-export type ContentTab = "webinars" | "knowledge";
+export type ContentTab = "webinars" | "knowledge" | "tracks";
+export type TrendingStamp = "Must read" | "Полезно знать" | "Горячий выпуск";
 
 export type Material = {
   id: string;
@@ -7,19 +8,36 @@ export type Material = {
   description: string;
   type: MaterialType;
   url: string;
+  coverUrl?: string;
   category: string[];
+  tags?: string[];
   format: string;
   author: {
     name: string;
-    avatar: string;
+    company?: string;
   };
   duration: number;
   createdAt: Date;
-  tab: ContentTab;
+  tab: Exclude<ContentTab, "tracks">;
+  archived?: boolean;
+  trendingStamp?: TrendingStamp | null;
+  views?: number;
+};
+
+export type LearningTrack = {
+  id: string;
+  title: string;
+  description: string;
+  materialIds: string[];
+  tags?: string[];
+  coverUrl?: string;
+  createdAt: Date;
+  archived?: boolean;
 };
 
 export type FilterState = {
   topics: string[];
+  speakers: string[];
   formats: string[];
   durations: string[];
 };

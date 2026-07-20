@@ -1,15 +1,34 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { onAuthStateChanged, User } from "firebase/auth";
 import {
+  getRedirectResult,
+  onAuthStateChanged,
+  signOut,
+  User
+} from "firebase/auth";
+import {
+  addDoc,
   collection,
+  doc,
+  increment,
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
+  serverTimestamp,
   Timestamp
 } from "firebase/firestore";
-import { BookOpen, GraduationCap, Menu, Search } from "lucide-react";
+import {
+  BookOpen,
+  CalendarDays,
+  FolderOpen,
+  GraduationCap,
+  Menu,
+  Search,
+  ShieldCheck
+} from "lucide-react";
+import Image from "next/image";
 import { AdminForm } from "@/components/AdminForm";
 import { ContentModal } from "@/components/ContentModal";
 import {
@@ -17,51 +36,231 @@ import {
   filterMaterials
 } from "@/components/FilterSidebar";
 import { MaterialCard } from "@/components/MaterialCard";
-import { auth, db } from "@/lib/firebase";
-import { demoMaterials, filterOptions } from "@/lib/materials";
-import type { ContentTab, FilterState, Material } from "@/types/material";
+import { TrackCard } from "@/components/TrackCard";
+import { TrackModal } from "@/components/TrackModal";
+import { UserLogin } from "@/components/UserLogin";
+import { ADMIN_EMAIL, auth, db } from "@/lib/firebase";
+import {
+  demoMaterials,
+  demoTracks,
+  durationOptions,
+  getSpeakerCompanyLabel,
+  uniqueSorted
+} from "@/lib/materials";
+import type {
+  ContentTab,
+  FilterState,
+  LearningTrack,
+  Material
+} from "@/types/material";
+import type { AccessUser } from "@/types/access-user";
+
+const PAGE_SIZE = 12;
+const MIN_DEMO_ITEMS_PER_SECTION = 6;
+const CALENDAR_URL = "https://learningagenda.netlify.app/";
+const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
+
+type AppTab = ContentTab | "calendar";
 
 const emptyFilters: FilterState = {
   topics: [],
+  speakers: [],
   formats: [],
   durations: []
 };
 
-const tabs: Array<{ id: ContentTab; label: string; icon: typeof GraduationCap }> =
+const tabs: Array<{ id: AppTab; label: string; icon: typeof GraduationCap }> =
   [
-    {
-      id: "webinars",
-      label: "Библиотека вебинаров",
-      icon: GraduationCap
-    },
-    {
-      id: "knowledge",
-      label: "База знаний",
-      icon: BookOpen
-    }
+    { id: "webinars", label: "Библиотека вебинаров", icon: GraduationCap },
+    { id: "knowledge", label: "База знаний", icon: BookOpen },
+    { id: "tracks", label: "Обучающий трек", icon: FolderOpen },
+    { id: "calendar", label: "Календарь", icon: CalendarDays }
   ];
+
+function addDemoMaterialsToMinimum(sourceMaterials: Material[]) {
+  const result = [...sourceMaterials];
+  const existingIds = new Set(sourceMaterials.map((material) => material.id));
+
+  (["webinars", "knowledge"] as const).forEach((tab) => {
+    let activeCount = result.filter(
+      (material) => material.tab === tab && !material.archived
+    ).length;
+
+    for (const demoMaterial of demoMaterials) {
+      if (
+        activeCount >= MIN_DEMO_ITEMS_PER_SECTION ||
+        demoMaterial.tab !== tab ||
+        existingIds.has(demoMaterial.id)
+      ) {
+        continue;
+      }
+
+      result.push(demoMaterial);
+      existingIds.add(demoMaterial.id);
+      activeCount += 1;
+    }
+  });
+
+  return result;
+}
 
 export default function Home() {
   const [materials, setMaterials] = useState<Material[]>(demoMaterials);
-  const [activeTab, setActiveTab] = useState<ContentTab>("webinars");
+  const [tracks, setTracks] = useState<LearningTrack[]>(demoTracks);
+  const [activeTab, setActiveTab] = useState<AppTab>("webinars");
   const [filters, setFilters] = useState<FilterState>(emptyFilters);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(
     null
   );
+  const [selectedTrack, setSelectedTrack] = useState<LearningTrack | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [user, setUser] = useState<User | null>(null);
+  const [accessUser, setAccessUser] = useState<AccessUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isAccessLoading, setIsAccessLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     if (!auth) {
+      setIsAuthLoading(false);
+      setIsAccessLoading(false);
       return;
     }
 
-    return onAuthStateChanged(auth, setUser);
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          setUser(result.user);
+          setIsAdminOpen(true);
+          window.sessionStorage.removeItem("travelEduAdminLogin");
+        }
+      })
+      .catch((error) => {
+        console.error("Google sign-in redirect failed", error);
+        setIsAdminOpen(true);
+      });
+
+    return onAuthStateChanged(auth, (nextUser) => {
+      setUser(nextUser);
+      setIsAuthLoading(false);
+
+      if (!nextUser) {
+        setAccessUser(null);
+        setIsAccessLoading(false);
+        window.localStorage.removeItem("travel-edu-session-start");
+      }
+
+      if (nextUser && window.sessionStorage.getItem("travelEduAdminLogin")) {
+        setIsAdminOpen(true);
+        window.sessionStorage.removeItem("travelEduAdminLogin");
+      }
+    });
   }, []);
 
+  const isAdmin = user?.email === ADMIN_EMAIL;
+  const hasAccess =
+    isAdmin || Boolean(accessUser?.active && !accessUser.archived);
+
   useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    if (isAdmin) {
+      setAccessUser(null);
+      setIsAccessLoading(false);
+      return;
+    }
+
     if (!db) {
+      setIsAccessLoading(false);
+      return;
+    }
+
+    setIsAccessLoading(true);
+
+    return onSnapshot(
+      doc(db, "accessUsers", user.uid),
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          setAccessUser(null);
+          setIsAccessLoading(false);
+          return;
+        }
+
+        const data = snapshot.data();
+        const toDate = (value: unknown) =>
+          value instanceof Timestamp ? value.toDate() : undefined;
+
+        setAccessUser({
+          id: snapshot.id,
+          login: data.login ?? "",
+          normalizedLogin: data.normalizedLogin ?? "",
+          displayName: data.displayName ?? data.login ?? "Пользователь",
+          email: data.email ?? "",
+          phone: data.phone ?? "",
+          role: data.role ?? "user",
+          active: data.active === true,
+          archived: data.archived === true,
+          passwordResetRequested: data.passwordResetRequested === true,
+          createdAt: toDate(data.createdAt) ?? new Date(),
+          updatedAt: toDate(data.updatedAt),
+          lastLoginAt: toDate(data.lastLoginAt)
+        });
+        setIsAccessLoading(false);
+      },
+      () => {
+        setAccessUser(null);
+        setIsAccessLoading(false);
+      }
+    );
+  }, [isAdmin, user]);
+
+  useEffect(() => {
+    if (!user || !hasAccess || !auth) {
+      return;
+    }
+
+    const storageKey = "travel-edu-session-start";
+    const currentStart = Number(window.localStorage.getItem(storageKey));
+    const sessionStart = currentStart || Date.now();
+    window.localStorage.setItem(storageKey, String(sessionStart));
+
+    const checkSession = () => {
+      if (Date.now() - sessionStart >= SESSION_DURATION_MS && auth) {
+        void signOut(auth);
+      }
+    };
+
+    checkSession();
+    const interval = window.setInterval(checkSession, 60_000);
+    return () => window.clearInterval(interval);
+  }, [hasAccess, user]);
+
+  useEffect(() => {
+    if (!user || !hasAccess || !db) {
+      return;
+    }
+
+    const eventKey = `travel-edu-login-event-${user.uid}`;
+
+    if (window.sessionStorage.getItem(eventKey)) {
+      return;
+    }
+
+    window.sessionStorage.setItem(eventKey, "1");
+    void addDoc(collection(db, "loginEvents"), {
+      uid: user.uid,
+      login: accessUser?.login ?? user.email ?? "",
+      createdAt: serverTimestamp(),
+      userAgent: window.navigator.userAgent.slice(0, 300)
+    }).catch(() => window.sessionStorage.removeItem(eventKey));
+  }, [accessUser?.login, hasAccess, user]);
+
+  useEffect(() => {
+    if (!db || !hasAccess) {
       return;
     }
 
@@ -70,40 +269,283 @@ export default function Home() {
       orderBy("createdAt", "desc")
     );
 
-    return onSnapshot(materialsQuery, (snapshot) => {
-      const firestoreMaterials = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        const createdAt =
-          data.createdAt instanceof Timestamp
-            ? data.createdAt.toDate()
-            : new Date();
+    return onSnapshot(
+      materialsQuery,
+      (snapshot) => {
+        const firestoreMaterials = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          const createdAt =
+            data.createdAt instanceof Timestamp
+              ? data.createdAt.toDate()
+              : new Date();
 
-        return {
-          id: doc.id,
-          title: data.title,
-          description: data.description,
-          type: data.type,
-          url: data.url,
-          category: data.category ?? [],
-          format: data.format,
-          author: data.author,
-          duration: data.duration,
-          createdAt,
-          tab: data.type === "video" ? "webinars" : "knowledge"
-        } as Material;
-      });
+          return {
+            id: doc.id,
+            title: data.title ?? "",
+            description: data.description ?? "",
+            type: data.type ?? "file",
+            url: data.url ?? "",
+            coverUrl: data.coverUrl ?? "",
+            category: data.category ?? [],
+            tags: data.tags ?? [],
+            format: data.format ?? "Документ",
+            author: {
+              name: data.author?.name ?? "",
+              company: data.author?.company ?? ""
+            },
+            duration: Number(data.duration ?? 0),
+            trendingStamp: data.trendingStamp || undefined,
+            views: Number(data.views ?? 0),
+            createdAt,
+            tab: data.tab ?? (data.type === "video" ? "webinars" : "knowledge"),
+            archived: Boolean(data.archived)
+          } as Material;
+        });
 
-      setMaterials(
-        firestoreMaterials.length > 0 ? firestoreMaterials : demoMaterials
-      );
+        setMaterials(addDemoMaterialsToMinimum(firestoreMaterials));
+      },
+      (error) => {
+        console.warn("Materials are shown from demo data:", error.message);
+        setMaterials(demoMaterials);
+      }
+    );
+  }, [hasAccess]);
+
+  useEffect(() => {
+    if (!db || !hasAccess) {
+      return;
+    }
+
+    const tracksQuery = query(
+      collection(db, "tracks"),
+      orderBy("createdAt", "desc")
+    );
+
+    return onSnapshot(
+      tracksQuery,
+      (snapshot) => {
+        const firestoreTracks = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          const createdAt =
+            data.createdAt instanceof Timestamp
+              ? data.createdAt.toDate()
+              : new Date();
+
+          return {
+            id: doc.id,
+            title: data.title ?? "",
+            description: data.description ?? "",
+            materialIds: data.materialIds ?? [],
+            tags: data.tags ?? [],
+            coverUrl: data.coverUrl ?? "",
+            createdAt,
+            archived: Boolean(data.archived)
+          } as LearningTrack;
+        });
+
+        setTracks(firestoreTracks.length > 0 ? firestoreTracks : demoTracks);
+      },
+      (error) => {
+        console.warn("Tracks are shown from demo data:", error.message);
+        setTracks(demoTracks);
+      }
+    );
+  }, [hasAccess]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const materialId = params.get("material");
+    const trackId = params.get("track");
+
+    if (materialId) {
+      const material = materials.find((item) => item.id === materialId);
+      if (material) {
+        setSelectedMaterial(material);
+        setActiveTab(material.tab);
+      }
+    }
+
+    if (trackId) {
+      const track = tracks.find((item) => item.id === trackId);
+      if (track) {
+        setSelectedTrack(track);
+        setActiveTab("tracks");
+      }
+    }
+  }, [materials, tracks]);
+
+  function updateUrl(params: Record<string, string | null>) {
+    const nextParams = new URLSearchParams(window.location.search);
+
+    Object.entries(params).forEach(([key, value]) => {
+      if (value) {
+        nextParams.set(key, value);
+      } else {
+        nextParams.delete(key);
+      }
     });
-  }, []);
+
+    const queryString = nextParams.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${queryString ? `?${queryString}` : ""}`
+    );
+  }
+
+  function handleTabChange(tab: AppTab) {
+    setActiveTab(tab);
+    setFilters(emptyFilters);
+    setIsFilterOpen(false);
+    setPage(1);
+  }
+
+  async function registerUniqueWebinarView(material: Material) {
+    if (material.tab !== "webinars") {
+      return;
+    }
+
+    const storageKey = `travel-edu-viewed-${material.id}`;
+
+    if (window.localStorage.getItem(storageKey)) {
+      return;
+    }
+
+    window.localStorage.setItem(storageKey, "1");
+    setMaterials((current) =>
+      current.map((item) =>
+        item.id === material.id
+          ? { ...item, views: (item.views ?? 0) + 1 }
+          : item
+      )
+    );
+
+    if (!db || material.id.startsWith("demo-")) {
+      return;
+    }
+
+    const firestore = db;
+
+    let deviceId = window.localStorage.getItem("travel-edu-device-id");
+
+    if (!deviceId) {
+      deviceId = window.crypto.randomUUID();
+      window.localStorage.setItem("travel-edu-device-id", deviceId);
+    }
+
+    try {
+      await runTransaction(firestore, async (transaction) => {
+        const viewRef = doc(
+          firestore,
+          "materialViews",
+          `${material.id}_${deviceId}`
+        );
+        const materialRef = doc(firestore, "materials", material.id);
+        const existingView = await transaction.get(viewRef);
+
+        if (existingView.exists()) {
+          return;
+        }
+
+        transaction.set(viewRef, {
+          materialId: material.id,
+          deviceId,
+          createdAt: serverTimestamp()
+        });
+        transaction.update(materialRef, { views: increment(1) });
+      });
+    } catch (error) {
+      console.warn("The webinar view could not be saved:", error);
+    }
+  }
+
+  function openMaterial(material: Material) {
+    void registerUniqueWebinarView(material);
+    setSelectedMaterial(material);
+    updateUrl({ material: material.id, track: null });
+  }
+
+  function closeMaterial() {
+    setSelectedMaterial(null);
+    updateUrl({ material: null });
+  }
+
+  function openTrack(track: LearningTrack) {
+    setSelectedTrack(track);
+    updateUrl({ track: track.id, material: null });
+  }
+
+  function closeTrack() {
+    setSelectedTrack(null);
+    updateUrl({ track: null });
+  }
+
+  const activeMaterials = useMemo(
+    () => materials.filter((material) => !material.archived),
+    [materials]
+  );
+
+  const activeTracks = useMemo(
+    () => tracks.filter((track) => !track.archived),
+    [tracks]
+  );
+
+  const materialsByTab = useMemo(
+    () => ({
+      webinars: activeMaterials.filter((material) => material.tab === "webinars"),
+      knowledge: activeMaterials.filter((material) => material.tab === "knowledge")
+    }),
+    [activeMaterials]
+  );
+
+  const topicOptions = useMemo(
+    () => ({
+      webinars: uniqueSorted(
+        materialsByTab.webinars.flatMap((material) => material.category)
+      ),
+      knowledge: uniqueSorted(
+        materialsByTab.knowledge.flatMap((material) => material.category)
+      ),
+      tracks: []
+    }),
+    [materialsByTab]
+  );
+
+  const knowledgeFormatOptions = useMemo(
+    () => uniqueSorted(materialsByTab.knowledge.map((material) => material.format)),
+    [materialsByTab]
+  );
+
+  const filterOptions = useMemo(() => {
+    if (activeTab === "tracks" || activeTab === "calendar") {
+      return {
+        topics: [],
+        speakers: [],
+        formats: [],
+        durations: []
+      };
+    }
+
+    const tabMaterials = materialsByTab[activeTab];
+
+    return {
+      topics: topicOptions[activeTab],
+      speakers:
+        activeTab === "webinars"
+          ? uniqueSorted(tabMaterials.map(getSpeakerCompanyLabel))
+          : [],
+      formats: activeTab === "knowledge" ? knowledgeFormatOptions : [],
+      durations: activeTab === "webinars" ? durationOptions : []
+    };
+  }, [activeTab, knowledgeFormatOptions, materialsByTab, topicOptions]);
 
   const visibleMaterials = useMemo(() => {
-    const tabMaterials = materials.filter(
-      (material) => material.tab === activeTab
-    );
-    const filteredMaterials = filterMaterials(tabMaterials, filters);
+    if (activeTab === "tracks" || activeTab === "calendar") {
+      return [];
+    }
+
+    const tabMaterials = materialsByTab[activeTab];
+    const filteredMaterials = filterMaterials(tabMaterials, filters, activeTab);
     const normalizedSearch = search.trim().toLowerCase();
 
     if (!normalizedSearch) {
@@ -115,51 +557,105 @@ export default function Home() {
         material.title,
         material.description,
         material.author.name,
+        material.author.company,
         material.format,
-        ...material.category
+        ...material.category,
+        ...(material.tags ?? [])
       ]
         .join(" ")
         .toLowerCase();
 
       return searchable.includes(normalizedSearch);
     });
-  }, [activeTab, filters, materials, search]);
+  }, [activeTab, filters, materialsByTab, search]);
+
+  const visibleTracks = useMemo(() => {
+    if (activeTab !== "tracks") {
+      return [];
+    }
+
+    const normalizedSearch = search.trim().toLowerCase();
+
+    if (!normalizedSearch) {
+      return activeTracks;
+    }
+
+    return activeTracks.filter((track) =>
+      [track.title, track.description, ...(track.tags ?? [])]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedSearch)
+    );
+  }, [activeTab, activeTracks, search]);
+
+  const visibleItemsCount =
+    activeTab === "tracks"
+      ? visibleTracks.length
+      : activeTab === "calendar"
+        ? 0
+        : visibleMaterials.length;
+  const totalPages = Math.max(1, Math.ceil(visibleItemsCount / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * PAGE_SIZE;
+  const paginatedMaterials = visibleMaterials.slice(
+    startIndex,
+    startIndex + PAGE_SIZE
+  );
+  const paginatedTracks = visibleTracks.slice(startIndex, startIndex + PAGE_SIZE);
+
+  if (isAuthLoading || (user && isAccessLoading)) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50">
+        <p className="text-sm font-medium text-slate-500">Проверяем доступ...</p>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return <UserLogin />;
+  }
+
+  if (!hasAccess) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+        <section className="w-full max-w-md rounded-xl bg-white p-7 text-center shadow-md ring-1 ring-slate-200/70">
+          <ShieldCheck className="mx-auto text-slate-300" size={34} />
+          <h1 className="mt-4 text-xl font-semibold text-slate-950">
+            Доступ приостановлен
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            Учетная запись не активна или еще не добавлена в PSN HUB.
+            Обратитесь к администратору.
+          </p>
+          <button
+            type="button"
+            onClick={() => auth && void signOut(auth)}
+            className="mt-6 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Выйти
+          </button>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
-        <header className="mb-8 rounded-xl bg-white px-5 py-6 shadow-sm ring-1 ring-slate-200/70 sm:px-8">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-3xl">
-              <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600">
-                Поехали с нами
-              </p>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
-                Travel-EDU
-              </h1>
-              <p className="mt-3 max-w-2xl text-base leading-7 text-slate-500">
-                Вебинары, чек-листы и документы для развития туристического
-                продукта, продаж и клиентского сервиса.
-              </p>
-            </div>
+      <div className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
+        <header className="mb-6 flex flex-wrap items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-sm ring-1 ring-slate-200/70 sm:px-5 lg:grid lg:grid-cols-[10rem_minmax(0,1fr)_10rem]">
+          <Image
+            src="/psn-logo.svg"
+            alt="Поехали с нами"
+            width={2108}
+            height={871}
+            priority
+            className="h-12 w-auto shrink-0 object-contain sm:h-14"
+          />
 
-            <div className="relative w-full lg:w-80">
-              <Search
-                size={18}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-              />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Поиск материалов"
-                className="w-full rounded-lg border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
-          </div>
-        </header>
-
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="inline-flex rounded-xl bg-white p-1 shadow-sm ring-1 ring-slate-200/70">
+          <nav
+            aria-label="Разделы PSN HUB"
+            className="order-3 inline-flex w-full flex-wrap rounded-lg bg-slate-100 p-1 lg:order-none lg:w-fit lg:justify-self-center"
+          >
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -168,11 +664,11 @@ export default function Home() {
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition ${
+                  onClick={() => handleTabChange(tab.id)}
+                  className={`inline-flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition lg:flex-none lg:px-4 ${
                     isActive
-                      ? "bg-blue-600 text-white shadow-sm"
-                      : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                      ? "bg-[#ea6a00] text-white shadow-sm"
+                      : "text-slate-500 hover:bg-white hover:text-slate-900"
                   }`}
                 >
                   <Icon size={16} />
@@ -180,44 +676,134 @@ export default function Home() {
                 </button>
               );
             })}
-          </div>
+          </nav>
 
           <button
             type="button"
-            onClick={() => setIsFilterOpen(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-200/70 lg:hidden"
+            onClick={() => setIsAdminOpen(true)}
+            aria-label="Открыть админ-панель"
+            title="Админ-панель"
+            className={`relative ml-auto inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border transition hover:border-[#ea6a00]/30 hover:bg-orange-50 hover:text-[#ea6a00] lg:ml-0 lg:justify-self-end ${
+              isAdmin
+                ? "border-[#ea6a00]/30 bg-orange-50 text-[#ea6a00]"
+                : "border-slate-200 text-slate-400"
+            }`}
           >
-            <Menu size={17} />
-            Фильтры
+            <ShieldCheck size={19} />
+            {isAdmin ? (
+              <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-emerald-500" />
+            ) : null}
           </button>
-        </div>
+        </header>
 
-        <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+        {activeTab !== "calendar" ? (
+          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative w-full sm:max-w-md">
+            <Search
+              size={18}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+            />
+            <input
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+              placeholder="Поиск материалов"
+              className="w-full rounded-lg border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm shadow-sm outline-none transition focus:border-[#ea6a00] focus:ring-2 focus:ring-orange-100"
+            />
+          </div>
+          {activeTab !== "tracks" ? (
+            <button
+              type="button"
+              onClick={() => setIsFilterOpen(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-200/70 lg:hidden"
+            >
+              <Menu size={17} />
+              Фильтры
+            </button>
+          ) : null}
+          </div>
+        ) : null}
+
+        {activeTab === "calendar" ? (
+          <section className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200/70">
+            <div className="flex items-center justify-between gap-4 border-b border-slate-100 px-4 py-3 sm:px-5">
+              <div className="flex min-w-0 items-center gap-3">
+                <CalendarDays size={20} className="shrink-0 text-[#ea6a00]" />
+                <h1 className="truncate text-base font-semibold text-slate-950">
+                  Календарь обучения
+                </h1>
+              </div>
+              <a
+                href={CALENDAR_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0 text-sm font-medium text-[#ea6a00] transition hover:text-[#c95b00]"
+              >
+                Открыть отдельно
+              </a>
+            </div>
+            <iframe
+              src={CALENDAR_URL}
+              title="Календарь обучения"
+              className="h-[calc(100vh-12rem)] min-h-[42rem] w-full bg-white"
+              allow="clipboard-read; clipboard-write"
+            />
+          </section>
+        ) : (
+          <div
+            className={
+              activeTab === "tracks"
+                ? "grid gap-6"
+                : "grid gap-6 lg:grid-cols-[22rem_1fr]"
+            }
+          >
           <FilterSidebar
+            activeTab={activeTab}
             filters={filters}
             options={filterOptions}
             isOpen={isFilterOpen}
             onClose={() => setIsFilterOpen(false)}
-            onChange={setFilters}
-            onReset={() => setFilters(emptyFilters)}
+            onChange={(nextFilters) => {
+              setFilters(nextFilters);
+              setPage(1);
+            }}
+            onReset={() => {
+              setFilters(emptyFilters);
+              setPage(1);
+            }}
           />
 
           <section className="space-y-5">
             <div className="flex items-center justify-between">
               <p className="text-sm font-medium text-slate-500">
-                Найдено: {visibleMaterials.length}
+                Найдено: {visibleItemsCount}
               </p>
             </div>
 
-            {visibleMaterials.length > 0 ? (
-              <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                {visibleMaterials.map((material) => (
-                  <MaterialCard
-                    key={material.id}
-                    material={material}
-                    onOpen={setSelectedMaterial}
-                  />
-                ))}
+            {visibleItemsCount > 0 ? (
+              <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                {activeTab === "tracks"
+                  ? paginatedTracks.map((track) => (
+                      <TrackCard
+                        key={track.id}
+                        track={track}
+                        count={
+                          track.materialIds.filter((id) =>
+                            activeMaterials.some((material) => material.id === id)
+                          ).length
+                        }
+                        onOpen={openTrack}
+                      />
+                    ))
+                  : paginatedMaterials.map((material) => (
+                      <MaterialCard
+                        key={material.id}
+                        material={material}
+                        onOpen={openMaterial}
+                      />
+                    ))}
               </div>
             ) : (
               <div className="rounded-xl bg-white p-10 text-center shadow-sm ring-1 ring-slate-200/70">
@@ -230,15 +816,53 @@ export default function Home() {
               </div>
             )}
 
-            <AdminForm user={user} />
+            {totalPages > 1 ? (
+              <div className="flex flex-wrap justify-center gap-2 pt-2">
+                {Array.from({ length: totalPages }, (_, index) => index + 1).map(
+                  (pageNumber) => (
+                    <button
+                      key={pageNumber}
+                      type="button"
+                      onClick={() => setPage(pageNumber)}
+                      className={`h-9 min-w-9 rounded-lg px-3 text-sm font-medium transition ${
+                        currentPage === pageNumber
+                          ? "bg-[#ea6a00] text-white"
+                          : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      {pageNumber}
+                    </button>
+                  )
+                )}
+              </div>
+            ) : null}
           </section>
-        </div>
+
+          </div>
+        )}
       </div>
 
-      <ContentModal
-        material={selectedMaterial}
-        onClose={() => setSelectedMaterial(null)}
+      <AdminForm
+        user={user}
+        isOpen={isAdminOpen}
+        onClose={() => setIsAdminOpen(false)}
+        topicOptions={topicOptions}
+        formatOptions={knowledgeFormatOptions}
+        materials={materials}
+        tracks={tracks}
       />
+
+      <TrackModal
+        track={selectedTrack}
+        materials={activeMaterials}
+        onClose={closeTrack}
+        onOpenMaterial={(material) => {
+          setSelectedTrack(null);
+          openMaterial(material);
+        }}
+      />
+
+      <ContentModal material={selectedMaterial} onClose={closeMaterial} />
     </main>
   );
 }

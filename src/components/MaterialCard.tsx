@@ -1,8 +1,14 @@
 "use client";
 
-import { CalendarDays, Clock3, FileText, PlayCircle } from "lucide-react";
+import {
+  Building2,
+  Clock3,
+  Eye,
+  FileText,
+  Play,
+  UserRound
+} from "lucide-react";
 import Image from "next/image";
-import { formatDate } from "@/lib/materials";
 import type { Material } from "@/types/material";
 
 type MaterialCardProps = {
@@ -11,69 +17,100 @@ type MaterialCardProps = {
 };
 
 export function MaterialCard({ material, onOpen }: MaterialCardProps) {
-  const Icon = material.type === "video" ? PlayCircle : FileText;
+  const CoverIcon = material.type === "video" ? Play : FileText;
+  const visibleTags = [...material.category, ...(material.tags ?? [])].slice(0, 4);
 
   return (
     <button
       type="button"
       onClick={() => onOpen(material)}
-      className="group overflow-hidden rounded-xl bg-white text-left shadow-sm ring-1 ring-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-soft focus:outline-none focus:ring-2 focus:ring-blue-500"
+      className="group flex h-[35rem] flex-col overflow-hidden rounded-xl bg-white text-left shadow-sm transition hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#ea6a00]"
     >
-      <div className="relative aspect-[16/10] bg-gradient-to-br from-sky-50 via-white to-blue-100">
-        <div className="absolute left-4 top-4 rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-blue-700 shadow-sm">
-          {material.format}
-        </div>
-        <div className="flex h-full items-center justify-center">
-          <span className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-600 text-white shadow-md transition group-hover:scale-105">
-            <Icon size={30} />
+      <div className="relative aspect-[16/10] overflow-hidden bg-gradient-to-br from-orange-50 via-white to-slate-100">
+        {material.coverUrl ? (
+          <Image
+            src={material.coverUrl}
+            alt={material.title}
+            fill
+            sizes="(min-width: 1024px) 33vw, 100vw"
+            className="object-cover transition duration-300 group-hover:scale-105"
+          />
+        ) : (
+          <div className="h-full bg-gradient-to-br from-orange-200 via-orange-100 to-slate-300" />
+        )}
+
+        <div className="absolute inset-0 z-10 bg-black/35" />
+        <div className="absolute inset-0 z-20 flex items-center justify-center">
+          <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white/20 shadow-lg ring-1 ring-white/30 backdrop-blur-md transition-all duration-300 group-hover:scale-110 group-hover:bg-white/35 group-hover:ring-white/50">
+            <CoverIcon
+              size={34}
+              strokeWidth={1.75}
+              className="text-white opacity-90 transition-opacity duration-300 group-hover:opacity-100"
+            />
           </span>
         </div>
+        {material.tab === "webinars" && material.trendingStamp ? (
+          <div className="absolute bottom-5 left-5 z-30 -rotate-6 rounded-md border-2 border-white/80 bg-white/10 px-3 py-1.5 font-mono text-xs font-bold uppercase tracking-widest text-white/80 shadow-sm backdrop-blur-[1px]">
+            {material.trendingStamp}
+          </div>
+        ) : null}
       </div>
 
-      <div className="space-y-4 p-5">
-        <div className="space-y-2">
-          <h3 className="line-clamp-2 text-lg font-semibold leading-snug text-slate-950">
-            {material.title}
-          </h3>
-          <p className="line-clamp-2 text-sm leading-6 text-slate-500">
-            {material.description}
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          {material.category.map((category) => (
+      <div className="flex flex-1 flex-col gap-4 p-5">
+        <div className="flex min-h-14 content-start flex-wrap gap-2">
+          {visibleTags.map((tag) => (
             <span
-              key={category}
-              className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600"
+              key={tag}
+              className="rounded-full bg-orange-50 px-3 py-1 text-xs font-medium text-[#b85300]"
             >
-              {category}
+              {tag}
             </span>
           ))}
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <Image
-              src={material.author.avatar}
-              alt={material.author.name}
-              width={36}
-              height={36}
-              className="h-9 w-9 rounded-full object-cover"
-            />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-slate-800">
-                {material.author.name}
+        <div className="space-y-2">
+          <h3 className="line-clamp-2 min-h-12 text-lg font-semibold leading-snug text-slate-950">
+            {material.title}
+          </h3>
+          <p className="line-clamp-2 min-h-12 text-sm leading-6 text-slate-500">
+            {material.description}
+          </p>
+        </div>
+
+        <div className="mt-auto flex min-h-[4.25rem] items-center justify-between gap-3 border-t border-slate-100 pt-4">
+          <div className="min-w-0 space-y-1">
+            {material.tab === "webinars" ? (
+              <>
+                <p className="flex items-center gap-1 truncate text-sm font-medium text-slate-800">
+                  <UserRound size={14} />
+                  {material.author.name || "Спикер не указан"}
+                </p>
+                {material.author.company ? (
+                  <p className="flex items-center gap-1 truncate text-xs text-slate-400">
+                    <Building2 size={13} />
+                    {material.author.company}
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <p className="flex items-center gap-1.5 text-sm font-medium text-slate-600">
+                <FileText size={14} />
+                {material.format}
               </p>
-              <p className="flex items-center gap-1 text-xs text-slate-400">
-                <CalendarDays size={13} />
-                {formatDate(material.createdAt)}
-              </p>
-            </div>
+            )}
           </div>
-          <span className="flex shrink-0 items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-            <Clock3 size={13} />
-            {material.duration} мин
-          </span>
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            <span className="flex items-center gap-1 rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-[#ea6a00]">
+              <Clock3 size={13} />
+              {material.duration} мин
+            </span>
+            {material.tab === "webinars" ? (
+              <span className="flex items-center gap-1 text-xs font-medium text-slate-400">
+                <Eye size={13} />
+                {material.views ?? 0}
+              </span>
+            ) : null}
+          </div>
         </div>
       </div>
     </button>

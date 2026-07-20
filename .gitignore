@@ -20,3 +20,9 @@ dist
 .npm-cache
 work
 outputs
+.preview-*
+crm-users*.csv
+crm-users*.tsv
+crm-users*.json
+service-account*.json
+firebase-admin-key*.json
