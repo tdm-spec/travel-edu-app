@@ -1,0 +1,4 @@
+id;login;name;email;phone;status
+1001;ivanova anna;Анна Иванова;anna@example.com;+77000000001;active
+1002;petrov ivan;Иван Петров;ivan@example.com;+77000000002;active
+1003;sidorova maria;Мария Сидорова;maria@example.com;+77000000003;архив

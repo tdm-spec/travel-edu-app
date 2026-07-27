@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "lint": "next lint"
+    "lint": "next lint",
+    "sync:users": "node scripts/sync-crm-users.mjs"
   },
   "dependencies": {
     "firebase": "^11.0.2",
@@ -15,7 +16,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-globe.gl": "^2.38.0",
-    "three": "^0.185.1"
+    "three": "^0.185.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",

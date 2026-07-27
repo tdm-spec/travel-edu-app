@@ -196,6 +196,7 @@ export default function Home() {
 
         setAccessUser({
           id: snapshot.id,
+          crmId: data.crmId ?? snapshot.id,
           login: data.login ?? "",
           normalizedLogin: data.normalizedLogin ?? "",
           displayName: data.displayName ?? data.login ?? "Пользователь",
@@ -204,6 +205,8 @@ export default function Home() {
           role: data.role ?? "user",
           active: data.active === true,
           archived: data.archived === true,
+          manual: data.manual === true,
+          source: data.source ?? "crm",
           passwordResetRequested: data.passwordResetRequested === true,
           createdAt: toDate(data.createdAt) ?? new Date(),
           updatedAt: toDate(data.updatedAt),
@@ -462,7 +465,7 @@ export default function Home() {
   function openMaterial(material: Material) {
     void registerUniqueWebinarView(material);
     setSelectedMaterial(material);
-    updateUrl({ material: material.id, track: null });
+    updateUrl({ material: material.id });
   }
 
   function closeMaterial() {
@@ -856,10 +859,7 @@ export default function Home() {
         track={selectedTrack}
         materials={activeMaterials}
         onClose={closeTrack}
-        onOpenMaterial={(material) => {
-          setSelectedTrack(null);
-          openMaterial(material);
-        }}
+        onOpenMaterial={openMaterial}
       />
 
       <ContentModal material={selectedMaterial} onClose={closeMaterial} />

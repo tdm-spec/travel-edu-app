@@ -2,6 +2,7 @@ export type AccessUserRole = "user" | "manager" | "admin";
 
 export type AccessUser = {
   id: string;
+  crmId?: string;
   login: string;
   normalizedLogin: string;
   displayName: string;
@@ -10,6 +11,8 @@ export type AccessUser = {
   role: AccessUserRole;
   active: boolean;
   archived: boolean;
+  manual?: boolean;
+  source?: "crm" | "manual";
   passwordResetRequested?: boolean;
   createdAt: Date;
   updatedAt?: Date;

@@ -3,9 +3,11 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
+  createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithRedirect,
   signOut,
+  updateProfile,
   User
 } from "firebase/auth";
 import {
@@ -24,6 +26,7 @@ import {
   Archive,
   BookOpen,
   Copy,
+  FileSpreadsheet,
   FolderOpen,
   GraduationCap,
   GripVertical,
@@ -44,9 +47,11 @@ import {
 import {
   ADMIN_EMAIL,
   auth,
+  createTemporaryAuth,
   db,
   googleProvider
 } from "@/lib/firebase";
+import { loginToFirebaseEmail, normalizeLogin } from "@/lib/access";
 import { formatDate, uniqueSorted } from "@/lib/materials";
 import type {
   ContentTab,
@@ -70,6 +75,26 @@ type AdminFormProps = {
 type AddMode = "menu" | "webinar" | "knowledge" | "track";
 type ArchiveMode = "webinars" | "knowledge" | "tracks";
 type ArchiveFilter = "active" | "archived" | "all";
+
+type ParsedImportUser = {
+  crmId: string;
+  login: string;
+  displayName: string;
+  email: string;
+  phone: string;
+  active: boolean;
+  isBlocked: boolean;
+};
+
+type ImportPreview = {
+  fileName: string;
+  totalRows: number;
+  validUsers: ParsedImportUser[];
+  skippedMissing: number;
+  skippedBlocked: number;
+  duplicateIds: number;
+  duplicateLogins: number;
+};
 
 const trendingStampOptions: TrendingStamp[] = [
   "Must read",
@@ -99,6 +124,147 @@ const initialTrackForm = {
   tags: ""
 };
 
+const initialManualUserForm = {
+  crmId: "",
+  login: "",
+  displayName: "",
+  email: "",
+  phone: "",
+  accessCode: ""
+};
+
+function normalizeImportValue(value: unknown) {
+  return String(value ?? "").normalize("NFKC").trim();
+}
+
+function normalizeImportHeader(value: unknown) {
+  return normalizeLogin(normalizeImportValue(value)).replace(/[\s._()/-]+/g, "");
+}
+
+function getImportValue(
+  record: Record<string, string>,
+  aliases: string[]
+) {
+  for (const alias of aliases) {
+    const value = record[normalizeImportHeader(alias)];
+    if (value !== undefined && value.trim()) return value.trim();
+  }
+
+  return "";
+}
+
+function rowHasImportHeader(row: unknown[], aliases: string[]) {
+  const normalizedRow = new Set(row.map(normalizeImportHeader));
+  return aliases.some((alias) => normalizedRow.has(normalizeImportHeader(alias)));
+}
+
+function findImportHeaderRow(rows: unknown[][]) {
+  const idAliases = ["id", "crm id", "user id", "ид", "код", "id пользователя"];
+  const loginAliases = ["login", "username", "логин"];
+  const headerIndex = rows.findIndex(
+    (row) => rowHasImportHeader(row, idAliases) && rowHasImportHeader(row, loginAliases)
+  );
+
+  return headerIndex >= 0 ? headerIndex : 0;
+}
+
+function isTruthyImportValue(value: string) {
+  const normalized = normalizeLogin(value);
+  return ["1", "да", "true", "yes", "y", "заблокирован", "blocked"].includes(
+    normalized
+  );
+}
+
+function buildImportPreview(fileName: string, rows: unknown[][]): ImportPreview {
+  const headerRowIndex = findImportHeaderRow(rows);
+  const headers = (rows[headerRowIndex] ?? []).map(normalizeImportHeader);
+  const records = rows.slice(headerRowIndex + 1).map((values) =>
+    Object.fromEntries(
+      headers.map((header, index) => [
+        header,
+        normalizeImportValue(values[index])
+      ])
+    )
+  );
+  const users = records.map((record) => {
+    const crmId = getImportValue(record, [
+      "id",
+      "crm id",
+      "user id",
+      "ид",
+      "код",
+      "id пользователя"
+    ]);
+    const rawLogin = getImportValue(record, ["login", "username", "логин"]);
+    const firstName = getImportValue(record, [
+      "first name",
+      "имя",
+      "имя рус",
+      "имя (рус.)"
+    ]);
+    const lastName = getImportValue(record, [
+      "last name",
+      "фамилия",
+      "фамилия рус",
+      "фамилия (рус)"
+    ]);
+    const displayName =
+      getImportValue(record, ["display name", "name", "фио"]) ||
+      [firstName, lastName].filter(Boolean).join(" ");
+    const login = rawLogin || displayName;
+    const blocked = getImportValue(record, ["blocked", "заблокирован"]);
+    const isBlocked = blocked ? isTruthyImportValue(blocked) : false;
+
+    return {
+      crmId,
+      login,
+      displayName: displayName || login,
+      email: getImportValue(record, ["email", "e-mail", "почта"]),
+      phone: getImportValue(record, ["phone", "телефон"]),
+      active: !isBlocked,
+      isBlocked
+    };
+  });
+  const validSourceUsers = users.filter(
+    (importUser) => importUser.crmId && importUser.login && !importUser.isBlocked
+  );
+  const seenIds = new Set<string>();
+  const seenLogins = new Set<string>();
+  const validUsers: ParsedImportUser[] = [];
+  let duplicateIds = 0;
+  let duplicateLogins = 0;
+
+  for (const importUser of validSourceUsers) {
+    const normalizedId = importUser.crmId.trim();
+    const normalizedLogin = normalizeLogin(importUser.login);
+
+    if (seenIds.has(normalizedId)) {
+      duplicateIds += 1;
+      continue;
+    }
+
+    if (seenLogins.has(normalizedLogin)) {
+      duplicateLogins += 1;
+      continue;
+    }
+
+    seenIds.add(normalizedId);
+    seenLogins.add(normalizedLogin);
+    validUsers.push(importUser);
+  }
+
+  return {
+    fileName,
+    totalRows: users.length,
+    validUsers,
+    skippedMissing: users.filter((importUser) => !importUser.crmId || !importUser.login)
+      .length,
+    skippedBlocked: users.filter((importUser) => importUser.isBlocked).length,
+    duplicateIds,
+    duplicateLogins
+  };
+}
+
 export function AdminForm({
   user,
   isOpen,
@@ -121,6 +287,10 @@ export function AdminForm({
   const [trackForm, setTrackForm] = useState(initialTrackForm);
   const [trackMaterialIds, setTrackMaterialIds] = useState<string[]>([]);
   const [accessUsers, setAccessUsers] = useState<AccessUser[]>([]);
+  const [manualUserForm, setManualUserForm] = useState(initialManualUserForm);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importAccessCode, setImportAccessCode] = useState("");
+  const [importArchiveMissing, setImportArchiveMissing] = useState(false);
 
   const isAdmin = user?.email === ADMIN_EMAIL;
 
@@ -143,6 +313,7 @@ export function AdminForm({
 
               return {
                 id: userDoc.id,
+                crmId: data.crmId ?? userDoc.id,
                 login: data.login ?? "",
                 normalizedLogin: data.normalizedLogin ?? "",
                 displayName: data.displayName ?? data.login ?? "Пользователь",
@@ -151,6 +322,8 @@ export function AdminForm({
                 role: data.role ?? "user",
                 active: data.active === true,
                 archived: data.archived === true,
+                manual: data.manual === true,
+                source: data.source ?? "crm",
                 passwordResetRequested: data.passwordResetRequested === true,
                 createdAt: toDate(data.createdAt) ?? new Date(),
                 updatedAt: toDate(data.updatedAt),
@@ -462,6 +635,161 @@ export function AdminForm({
     }
   }
 
+  async function handleManualUserSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!db || !isAdmin) {
+      setMessage("Доступ разрешен только администратору.");
+      return;
+    }
+
+    const crmId = manualUserForm.crmId.trim();
+    const login = manualUserForm.login.trim() || manualUserForm.displayName.trim();
+    const displayName = manualUserForm.displayName.trim() || login;
+    const accessCode = manualUserForm.accessCode.trim();
+
+    if (!crmId || !login || accessCode.length < 6) {
+      setMessage("Заполните CRM ID, логин/ФИО и актуальный код доступа.");
+      return;
+    }
+
+    const temporary = createTemporaryAuth();
+    setIsSubmitting(true);
+    setMessage("");
+
+    try {
+      const authEmail = await loginToFirebaseEmail(login);
+      const credential = await createUserWithEmailAndPassword(
+        temporary.auth,
+        authEmail,
+        accessCode
+      );
+
+      if (displayName) {
+        await updateProfile(credential.user, { displayName });
+      }
+
+      await setDoc(
+        doc(db, "accessUsers", credential.user.uid),
+        {
+          crmId,
+          login,
+          normalizedLogin: normalizeLogin(login),
+          displayName,
+          email: manualUserForm.email.trim(),
+          phone: manualUserForm.phone.trim(),
+          role: "user",
+          active: true,
+          archived: false,
+          manual: true,
+          source: "manual",
+          passwordResetRequested: false,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+
+      setManualUserForm(initialManualUserForm);
+      setMessage(
+        "Пользователь добавлен вручную. При следующем импорте CRM запись обновится по этому же CRM ID и логину."
+      );
+    } catch (error) {
+      console.error("Failed to create manual access user:", error);
+      setMessage(
+        "Не удалось добавить пользователя. Проверьте, не существует ли уже такой логин, и включен ли Email/Password вход в Firebase."
+      );
+    } finally {
+      await temporary.dispose().catch(() => undefined);
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleImportFile(file: File | null) {
+    if (!file) {
+      return;
+    }
+
+    setMessage("");
+    setImportPreview(null);
+
+    try {
+      const xlsx = await import("xlsx");
+      const workbook = xlsx.read(await file.arrayBuffer(), {
+        type: "array",
+        cellDates: false,
+        raw: false
+      });
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = xlsx.utils.sheet_to_json<unknown[]>(worksheet, {
+        header: 1,
+        defval: "",
+        raw: false
+      });
+
+      setImportPreview(buildImportPreview(file.name, rows));
+    } catch (error) {
+      console.error("Failed to parse CRM import file:", error);
+      setMessage("Не удалось прочитать Excel-файл. Проверьте, что это .xlsx выгрузка CRM.");
+    }
+  }
+
+  async function handleWebImportSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!user || !isAdmin || !importPreview) {
+      setMessage("Для импорта нужно войти под администратором и выбрать файл.");
+      return;
+    }
+
+    if (importAccessCode.trim().length < 12) {
+      setMessage("Код доступа должен быть не короче 12 символов.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/admin/import-users", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          idToken: await user.getIdToken(),
+          accessCode: importAccessCode.trim(),
+          archiveMissing: importArchiveMissing,
+          users: importPreview.validUsers
+        })
+      });
+      const result = (await response.json()) as {
+        message?: string;
+        created?: number;
+        updated?: number;
+        skipped?: number;
+        imported?: number;
+      };
+
+      if (!response.ok) {
+        throw new Error(result.message ?? "Импорт не выполнен.");
+      }
+
+      setMessage(
+        `Импорт завершен. Импортировано: ${result.imported ?? 0}, создано: ${
+          result.created ?? 0
+        }, обновлено: ${result.updated ?? 0}, пропущено: ${result.skipped ?? 0}.`
+      );
+    } catch (error) {
+      console.error("Web CRM import failed:", error);
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Не удалось выполнить импорт пользователей."
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   function toggleTrackMaterial(id: string) {
     setTrackMaterialIds((current) =>
       current.includes(id)
@@ -637,6 +965,17 @@ export function AdminForm({
                 <UsersWorkspace
                   users={accessUsers}
                   onUpdate={updateAccessUser}
+                  manualUserForm={manualUserForm}
+                  importPreview={importPreview}
+                  importAccessCode={importAccessCode}
+                  importArchiveMissing={importArchiveMissing}
+                  isSubmitting={isSubmitting}
+                  onManualUserChange={setManualUserForm}
+                  onManualUserSubmit={handleManualUserSubmit}
+                  onImportAccessCodeChange={setImportAccessCode}
+                  onImportArchiveMissingChange={setImportArchiveMissing}
+                  onImportFile={handleImportFile}
+                  onWebImportSubmit={handleWebImportSubmit}
                 />
               )}
 
@@ -1044,12 +1383,231 @@ function TrackCreateForm({
   );
 }
 
+function ManualUserCreateForm({
+  form,
+  isSubmitting,
+  onFormChange,
+  onSubmit
+}: {
+  form: typeof initialManualUserForm;
+  isSubmitting: boolean;
+  onFormChange: (form: typeof initialManualUserForm) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form
+      onSubmit={onSubmit}
+      className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200"
+    >
+      <div className="flex flex-col gap-2">
+        <h3 className="text-lg font-semibold text-slate-950">
+          Добавить пользователя вручную
+        </h3>
+        <p className="max-w-3xl text-sm leading-6 text-slate-500">
+          Используйте это для новых сотрудников между CRM-импортами. CRM ID нужен,
+          чтобы следующий импорт обновил эту запись, а не создал дубль.
+        </p>
+      </div>
+
+      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <TextField
+          label="CRM ID"
+          value={form.crmId}
+          placeholder="ID пользователя из CRM"
+          onChange={(value) => onFormChange({ ...form, crmId: value })}
+          required
+        />
+        <TextField
+          label="Логин или ФИО для входа"
+          value={form.login}
+          placeholder="Например: Миронова Марина"
+          onChange={(value) => onFormChange({ ...form, login: value })}
+          required
+        />
+        <TextField
+          label="Имя в списке"
+          value={form.displayName}
+          placeholder="Как показывать в админке"
+          onChange={(value) => onFormChange({ ...form, displayName: value })}
+        />
+        <TextField
+          label="Почта"
+          type="email"
+          value={form.email}
+          onChange={(value) => onFormChange({ ...form, email: value })}
+        />
+        <TextField
+          label="Телефон"
+          value={form.phone}
+          onChange={(value) => onFormChange({ ...form, phone: value })}
+        />
+        <TextField
+          label="Актуальный код доступа"
+          type="password"
+          value={form.accessCode}
+          placeholder="Текущий недельный код"
+          onChange={(value) => onFormChange({ ...form, accessCode: value })}
+          required
+        />
+      </div>
+
+      <div className="mt-5 flex justify-end">
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="inline-flex items-center gap-2 rounded-lg bg-[#ea6a00] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#cf5e00] disabled:cursor-wait disabled:opacity-60"
+        >
+          <UserCheck size={17} />
+          {isSubmitting ? "Создаем..." : "Дать доступ"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function CrmImportPanel({
+  preview,
+  accessCode,
+  archiveMissing,
+  isSubmitting,
+  onAccessCodeChange,
+  onArchiveMissingChange,
+  onFile,
+  onSubmit
+}: {
+  preview: ImportPreview | null;
+  accessCode: string;
+  archiveMissing: boolean;
+  isSubmitting: boolean;
+  onAccessCodeChange: (value: string) => void;
+  onArchiveMissingChange: (value: boolean) => void;
+  onFile: (file: File | null) => Promise<void>;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form
+      onSubmit={onSubmit}
+      className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200"
+    >
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-[#ea6a00]">
+            <FileSpreadsheet size={20} />
+            <h3 className="text-lg font-semibold text-slate-950">
+              Импорт пользователей из CRM
+            </h3>
+          </div>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
+            Загрузите Excel-выгрузку. Система обновит существующих пользователей,
+            создаст новых, применит актуальный код доступа и пропустит заблокированных.
+          </p>
+        </div>
+
+        <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          <FileSpreadsheet size={17} />
+          Выбрать .xlsx
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            className="sr-only"
+            onChange={(event) => void onFile(event.target.files?.[0] ?? null)}
+          />
+        </label>
+      </div>
+
+      {preview ? (
+        <div className="mt-5 space-y-5">
+          <div className="rounded-lg bg-slate-50 p-4 ring-1 ring-slate-200">
+            <p className="break-all text-sm font-semibold text-slate-900">
+              {preview.fileName}
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <ImportStat label="Всего строк" value={preview.totalRows} />
+              <ImportStat label="К импорту" value={preview.validUsers.length} />
+              <ImportStat label="Без ID/логина" value={preview.skippedMissing} />
+              <ImportStat label="Заблокированы" value={preview.skippedBlocked} />
+              <ImportStat
+                label="Повторы"
+                value={preview.duplicateIds + preview.duplicateLogins}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+            <TextField
+              label="Актуальный код доступа"
+              type="password"
+              value={accessCode}
+              placeholder="Код, который получат пользователи"
+              onChange={onAccessCodeChange}
+              required
+            />
+
+            <button
+              type="submit"
+              disabled={isSubmitting || preview.validUsers.length === 0}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#ea6a00] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#cf5e00] disabled:cursor-wait disabled:opacity-60"
+            >
+              <UserCheck size={17} />
+              {isSubmitting ? "Импортируем..." : "Импортировать"}
+            </button>
+          </div>
+
+          <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={archiveMissing}
+              onChange={(event) => onArchiveMissingChange(event.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-slate-300 text-[#ea6a00] focus:ring-[#ea6a00]"
+            />
+            <span>
+              Архивировать пользователей, которых нет в этой выгрузке. Включайте
+              только если файл точно полный, а не частичная выборка.
+            </span>
+          </label>
+        </div>
+      ) : null}
+    </form>
+  );
+}
+
+function ImportStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg bg-white px-3 py-3 ring-1 ring-slate-200">
+      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <p className="mt-1 text-xl font-semibold text-slate-950">{value}</p>
+    </div>
+  );
+}
+
 function UsersWorkspace({
   users,
-  onUpdate
+  onUpdate,
+  manualUserForm,
+  importPreview,
+  importAccessCode,
+  importArchiveMissing,
+  isSubmitting,
+  onManualUserChange,
+  onManualUserSubmit,
+  onImportAccessCodeChange,
+  onImportArchiveMissingChange,
+  onImportFile,
+  onWebImportSubmit
 }: {
   users: AccessUser[];
   onUpdate: (id: string, payload: Partial<AccessUser>) => Promise<void>;
+  manualUserForm: typeof initialManualUserForm;
+  importPreview: ImportPreview | null;
+  importAccessCode: string;
+  importArchiveMissing: boolean;
+  isSubmitting: boolean;
+  onManualUserChange: (form: typeof initialManualUserForm) => void;
+  onManualUserSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onImportAccessCodeChange: (value: string) => void;
+  onImportArchiveMissingChange: (value: boolean) => void;
+  onImportFile: (file: File | null) => Promise<void>;
+  onWebImportSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"active" | "archived" | "all">("active");
@@ -1084,6 +1642,22 @@ function UsersWorkspace({
   return (
     <div className="space-y-5">
       <WeeklyCodeGenerator />
+      <CrmImportPanel
+        preview={importPreview}
+        accessCode={importAccessCode}
+        archiveMissing={importArchiveMissing}
+        isSubmitting={isSubmitting}
+        onAccessCodeChange={onImportAccessCodeChange}
+        onArchiveMissingChange={onImportArchiveMissingChange}
+        onFile={onImportFile}
+        onSubmit={onWebImportSubmit}
+      />
+      <ManualUserCreateForm
+        form={manualUserForm}
+        isSubmitting={isSubmitting}
+        onFormChange={onManualUserChange}
+        onSubmit={onManualUserSubmit}
+      />
 
       <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -1159,6 +1733,11 @@ function UsersWorkspace({
                       <span className="mt-1 block truncate text-xs text-slate-500">
                         {accessUser.login}
                       </span>
+                      {accessUser.manual ? (
+                        <span className="mt-2 inline-flex rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-[#b95200]">
+                          Ручной доступ
+                        </span>
+                      ) : null}
                     </span>
                     <span
                       className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${
@@ -1225,7 +1804,10 @@ function UserEditor({
           </span>
         </div>
         <p className="mt-2 break-all font-mono text-xs text-slate-400">
-          CRM ID / UID: {accessUser.id}
+          CRM ID: {accessUser.crmId ?? accessUser.id}
+        </p>
+        <p className="mt-1 break-all font-mono text-xs text-slate-400">
+          Firebase UID: {accessUser.id}
         </p>
       </div>
 

@@ -1,9 +1,9 @@
-import { FirebaseApp, getApps, initializeApp } from "firebase/app";
+import { deleteApp, FirebaseApp, getApps, initializeApp } from "firebase/app";
 import { Analytics, getAnalytics, isSupported } from "firebase/analytics";
 import { Auth, getAuth, GoogleAuthProvider } from "firebase/auth";
 import { Firestore, getFirestore } from "firebase/firestore";
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey:
     process.env.NEXT_PUBLIC_FIREBASE_API_KEY ??
     "AIzaSyBvX9x2IFLzG5nf8akzWmzLuv7r442XiKY",
@@ -47,3 +47,15 @@ googleProvider.setCustomParameters({
 
 export const ADMIN_EMAIL =
   process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "psnkzeducation@gmail.com";
+
+export function createTemporaryAuth() {
+  const temporaryApp = initializeApp(
+    firebaseConfig,
+    `manual-user-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  );
+
+  return {
+    auth: getAuth(temporaryApp),
+    dispose: () => deleteApp(temporaryApp)
+  };
+}

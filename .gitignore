@@ -24,5 +24,6 @@ outputs
 crm-users*.csv
 crm-users*.tsv
 crm-users*.json
+!examples/crm-users.example.csv
 service-account*.json
 firebase-admin-key*.json
