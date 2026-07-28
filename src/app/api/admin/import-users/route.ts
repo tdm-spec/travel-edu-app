@@ -183,8 +183,13 @@ async function identityToolkit(
   action: "lookup" | "update" | "signUp",
   body: Record<string, unknown>
 ) {
+  const url =
+    action === "signUp"
+      ? `https://identitytoolkit.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/accounts`
+      : `https://identitytoolkit.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/accounts:${action}`;
+
   const response = await fetch(
-    `https://identitytoolkit.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/accounts:${action}`,
+    url,
     {
       method: "POST",
       headers: {

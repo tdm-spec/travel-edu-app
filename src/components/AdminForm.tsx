@@ -16,7 +16,10 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  limit,
   onSnapshot,
+  orderBy,
+  query,
   serverTimestamp,
   setDoc,
   Timestamp,
@@ -94,6 +97,18 @@ type ImportPreview = {
   skippedBlocked: number;
   duplicateIds: number;
   duplicateLogins: number;
+};
+
+type ImportHistoryItem = {
+  id: string;
+  fileName: string;
+  actor: string;
+  imported: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  archiveMissing: boolean;
+  createdAt: Date;
 };
 
 const trendingStampOptions: TrendingStamp[] = [
@@ -291,6 +306,7 @@ export function AdminForm({
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [importAccessCode, setImportAccessCode] = useState("");
   const [importArchiveMissing, setImportArchiveMissing] = useState(false);
+  const [lastImport, setLastImport] = useState<ImportHistoryItem | null>(null);
 
   const isAdmin = user?.email === ADMIN_EMAIL;
 
@@ -341,6 +357,42 @@ export function AdminForm({
             : `Не удалось загрузить пользователей: ${error.message}`
         );
       }
+    );
+  }, [isAdmin, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !isAdmin || !db) {
+      setLastImport(null);
+      return;
+    }
+
+    return onSnapshot(
+      query(collection(db, "importHistory"), orderBy("createdAt", "desc"), limit(1)),
+      (snapshot) => {
+        const latest = snapshot.docs[0];
+
+        if (!latest) {
+          setLastImport(null);
+          return;
+        }
+
+        const data = latest.data();
+        const createdAt =
+          data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date();
+
+        setLastImport({
+          id: latest.id,
+          fileName: data.fileName ?? "",
+          actor: data.actor ?? "",
+          imported: Number(data.imported ?? 0),
+          created: Number(data.created ?? 0),
+          updated: Number(data.updated ?? 0),
+          skipped: Number(data.skipped ?? 0),
+          archiveMissing: data.archiveMissing === true,
+          createdAt
+        });
+      },
+      () => setLastImport(null)
     );
   }, [isAdmin, isOpen]);
 
@@ -694,6 +746,7 @@ export function AdminForm({
       setMessage(
         "Пользователь добавлен вручную. При следующем импорте CRM запись обновится по этому же CRM ID и логину."
       );
+
     } catch (error) {
       console.error("Failed to create manual access user:", error);
       setMessage(
@@ -747,6 +800,15 @@ export function AdminForm({
       return;
     }
 
+    if (
+      importArchiveMissing &&
+      !window.confirm(
+        "Вы включили архивацию пользователей, которых нет в файле. Продолжайте только если это полная CRM-выгрузка, а не тестовая выборка."
+      )
+    ) {
+      return;
+    }
+
     setIsSubmitting(true);
     setMessage("");
 
@@ -778,6 +840,22 @@ export function AdminForm({
           result.created ?? 0
         }, обновлено: ${result.updated ?? 0}, пропущено: ${result.skipped ?? 0}.`
       );
+      try {
+        if (db) {
+          await addDoc(collection(db, "importHistory"), {
+            fileName: importPreview.fileName,
+            actor: user.email ?? "",
+            imported: result.imported ?? 0,
+            created: result.created ?? 0,
+            updated: result.updated ?? 0,
+            skipped: result.skipped ?? 0,
+            archiveMissing: importArchiveMissing,
+            createdAt: serverTimestamp()
+          });
+        }
+      } catch (historyError) {
+        console.warn("CRM import history was not saved:", historyError);
+      }
     } catch (error) {
       console.error("Web CRM import failed:", error);
       setMessage(
@@ -969,6 +1047,7 @@ export function AdminForm({
                   importPreview={importPreview}
                   importAccessCode={importAccessCode}
                   importArchiveMissing={importArchiveMissing}
+                  lastImport={lastImport}
                   isSubmitting={isSubmitting}
                   onManualUserChange={setManualUserForm}
                   onManualUserSubmit={handleManualUserSubmit}
@@ -1469,6 +1548,7 @@ function CrmImportPanel({
   preview,
   accessCode,
   archiveMissing,
+  lastImport,
   isSubmitting,
   onAccessCodeChange,
   onArchiveMissingChange,
@@ -1478,12 +1558,21 @@ function CrmImportPanel({
   preview: ImportPreview | null;
   accessCode: string;
   archiveMissing: boolean;
+  lastImport: ImportHistoryItem | null;
   isSubmitting: boolean;
   onAccessCodeChange: (value: string) => void;
   onArchiveMissingChange: (value: boolean) => void;
   onFile: (file: File | null) => Promise<void>;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const [copiedAccessCode, setCopiedAccessCode] = useState(false);
+
+  async function copyAccessCode() {
+    if (!accessCode) return;
+    await window.navigator.clipboard.writeText(accessCode);
+    setCopiedAccessCode(true);
+  }
+
   return (
     <form
       onSubmit={onSubmit}
@@ -1515,6 +1604,23 @@ function CrmImportPanel({
         </label>
       </div>
 
+      {lastImport ? (
+        <div className="mt-5 rounded-lg border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900">
+          <p className="font-semibold">Последний импорт завершен</p>
+          <p className="mt-1 leading-6">
+            {formatDate(lastImport.createdAt)} · {lastImport.actor || "администратор"} ·
+            импортировано: {lastImport.imported}, создано: {lastImport.created},
+            обновлено: {lastImport.updated}, пропущено: {lastImport.skipped}
+            {lastImport.archiveMissing ? " · архивация отсутствующих включалась" : ""}
+          </p>
+          {lastImport.fileName ? (
+            <p className="mt-1 break-all text-xs text-emerald-700">
+              Файл: {lastImport.fileName}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {preview ? (
         <div className="mt-5 space-y-5">
           <div className="rounded-lg bg-slate-50 p-4 ring-1 ring-slate-200">
@@ -1533,15 +1639,28 @@ function CrmImportPanel({
             </div>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+          <div className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
             <TextField
               label="Актуальный код доступа"
               type="password"
               value={accessCode}
               placeholder="Код, который получат пользователи"
-              onChange={onAccessCodeChange}
+              onChange={(value) => {
+                setCopiedAccessCode(false);
+                onAccessCodeChange(value);
+              }}
               required
             />
+
+            <button
+              type="button"
+              onClick={() => void copyAccessCode()}
+              disabled={!accessCode}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Copy size={17} />
+              {copiedAccessCode ? "Скопировано" : "Скопировать код"}
+            </button>
 
             <button
               type="submit"
@@ -1587,6 +1706,7 @@ function UsersWorkspace({
   importPreview,
   importAccessCode,
   importArchiveMissing,
+  lastImport,
   isSubmitting,
   onManualUserChange,
   onManualUserSubmit,
@@ -1601,6 +1721,7 @@ function UsersWorkspace({
   importPreview: ImportPreview | null;
   importAccessCode: string;
   importArchiveMissing: boolean;
+  lastImport: ImportHistoryItem | null;
   isSubmitting: boolean;
   onManualUserChange: (form: typeof initialManualUserForm) => void;
   onManualUserSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -1629,6 +1750,8 @@ function UsersWorkspace({
     return [
       accessUser.displayName,
       accessUser.login,
+      accessUser.normalizedLogin,
+      accessUser.crmId,
       accessUser.email,
       accessUser.phone,
       accessUser.id
@@ -1646,6 +1769,7 @@ function UsersWorkspace({
         preview={importPreview}
         accessCode={importAccessCode}
         archiveMissing={importArchiveMissing}
+        lastImport={lastImport}
         isSubmitting={isSubmitting}
         onAccessCodeChange={onImportAccessCodeChange}
         onArchiveMissingChange={onImportArchiveMissingChange}

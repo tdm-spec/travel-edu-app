@@ -2,16 +2,60 @@
 
 import { FormEvent, useState } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { CircleHelp, Eye, EyeOff } from "lucide-react";
+import { ChevronDown, CircleHelp, Eye, EyeOff } from "lucide-react";
 import Image from "next/image";
 import AnimatedTravelHero from "@/components/AnimatedTravelHero";
 import { loginToFirebaseEmail } from "@/lib/access";
 import { auth } from "@/lib/firebase";
 
+type LoginStatus =
+  | "active"
+  | "admin"
+  | "archived"
+  | "blocked"
+  | "empty"
+  | "not-found"
+  | "unknown";
+
+async function getLoginStatus(login: string) {
+  try {
+    const response = await fetch("/api/access/login-status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ login })
+    });
+    const data = (await response.json()) as { status?: LoginStatus };
+    return data.status ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function getLoginErrorMessage(status: LoginStatus) {
+  if (status === "not-found") {
+    return "Пользователь не найден. Проверьте CRM-логин или ФИО как в CRM.";
+  }
+
+  if (status === "blocked") {
+    return "Доступ заблокирован. Обратитесь к администратору PSN HUB.";
+  }
+
+  if (status === "archived") {
+    return "Доступ архивирован. Обратитесь к администратору PSN HUB.";
+  }
+
+  if (status === "active" || status === "admin") {
+    return "Код доступа или пароль неверный. Проверьте актуальный код в CRM.";
+  }
+
+  return "Не удалось войти. Проверьте логин и актуальный код доступа.";
+}
+
 export function UserLogin() {
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -30,7 +74,8 @@ export function UserLogin() {
       const email = await loginToFirebaseEmail(login);
       await signInWithEmailAndPassword(auth, email, password);
     } catch {
-      setMessage("Не удалось войти. Проверьте логин и код доступа.");
+      const status = await getLoginStatus(login);
+      setMessage(getLoginErrorMessage(status));
     } finally {
       setIsSubmitting(false);
     }
@@ -62,12 +107,12 @@ export function UserLogin() {
 
           <form onSubmit={handleSubmit} className="mt-12 space-y-8">
             <label className="relative block border-b-2 border-[#E5E7EB] transition-all duration-300 focus-within:border-[#F26522] focus-within:shadow-[0_7px_10px_-9px_rgba(242,101,34,0.9)]">
-              <span className="sr-only">Логин CRM или почта администратора</span>
+              <span className="sr-only">CRM-логин, ФИО или почта администратора</span>
               <input
                 type="text"
                 value={login}
                 onChange={(event) => setLogin(event.target.value)}
-                placeholder="Логин CRM"
+                placeholder="Логин"
                 autoComplete="username"
                 required
                 aria-describedby="login-help"
@@ -85,8 +130,8 @@ export function UserLogin() {
                   role="tooltip"
                   className="pointer-events-none absolute bottom-[calc(100%+0.5rem)] right-0 z-20 w-72 rounded-md bg-[#0b182f] px-3 py-2 text-left text-xs font-normal leading-5 text-white opacity-0 shadow-lg transition-opacity duration-200 group-hover:opacity-100 group-focus:opacity-100"
                 >
-                  Пользователь вводит CRM-логин или ФИО, если логин в CRM пустой.
-                  Администратор вводит почту администратора.
+                  Введите логин, который вы используете в CRM, и актуальный код
+                  в качестве пароля.
                 </span>
               </span>
             </label>
@@ -129,6 +174,34 @@ export function UserLogin() {
               {isSubmitting ? "Входим..." : "Войти"}
             </button>
           </form>
+
+          <div className="mt-5 text-center">
+            <button
+              type="button"
+              onClick={() => setShowHelp((current) => !current)}
+              aria-expanded={showHelp}
+              className="inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-[#F26522] transition hover:text-[#dc5518] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F26522] focus-visible:ring-offset-4"
+            >
+              Не получается войти
+              <ChevronDown
+                size={16}
+                className={`transition-transform duration-200 ${showHelp ? "rotate-180" : ""}`}
+                aria-hidden="true"
+              />
+            </button>
+
+            {showHelp ? (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-left text-sm leading-6 text-slate-500 shadow-sm">
+                <p className="mt-1">
+                  Проверьте написание логина либо имени и фамилии, а также
+                  актуальный код доступа и статус в CRM. Возможно, ваш аккаунт
+                  был приостановлен. Код доступа находится в актуальной новости
+                  в CRM. Если доступ нужен срочно, обратитесь к администратору:
+                  psnkzeducation@gmail.com, +7 708 491 4880.
+                </p>
+              </div>
+            ) : null}
+          </div>
         </div>
       </section>
     </main>

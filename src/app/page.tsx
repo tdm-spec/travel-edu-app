@@ -24,7 +24,10 @@ import {
   CalendarDays,
   FolderOpen,
   GraduationCap,
+  LogOut,
+  Mail,
   Menu,
+  Phone,
   Search,
   ShieldCheck
 } from "lucide-react";
@@ -131,9 +134,12 @@ export default function Home() {
 
     getRedirectResult(auth)
       .then((result) => {
-        if (result?.user) {
+        if (result?.user?.email === ADMIN_EMAIL) {
           setUser(result.user);
           setIsAdminOpen(true);
+          window.sessionStorage.removeItem("travelEduAdminLogin");
+        } else if (result?.user) {
+          setIsAdminOpen(false);
           window.sessionStorage.removeItem("travelEduAdminLogin");
         }
       })
@@ -150,10 +156,17 @@ export default function Home() {
         setAccessUser(null);
         setIsAccessLoading(false);
         window.localStorage.removeItem("travel-edu-session-start");
+        setIsAdminOpen(false);
       }
 
-      if (nextUser && window.sessionStorage.getItem("travelEduAdminLogin")) {
+      if (
+        nextUser?.email === ADMIN_EMAIL &&
+        window.sessionStorage.getItem("travelEduAdminLogin")
+      ) {
         setIsAdminOpen(true);
+        window.sessionStorage.removeItem("travelEduAdminLogin");
+      } else if (nextUser?.email !== ADMIN_EMAIL) {
+        setIsAdminOpen(false);
         window.sessionStorage.removeItem("travelEduAdminLogin");
       }
     });
@@ -630,6 +643,22 @@ export default function Home() {
             Учетная запись не активна или еще не добавлена в PSN HUB.
             Обратитесь к администратору.
           </p>
+          <div className="mt-5 rounded-lg bg-slate-50 p-4 text-left text-sm leading-6 text-slate-600 ring-1 ring-slate-200">
+            <p className="font-semibold text-slate-900">Что делать дальше</p>
+            <p className="mt-1">
+              Напишите администратору и укажите свой CRM-логин или ФИО.
+            </p>
+            <div className="mt-3 space-y-2">
+              <p className="flex items-center gap-2">
+                <Mail size={16} className="text-[#ea6a00]" />
+                psnkzeducation@gmail.com
+              </p>
+              <p className="flex items-center gap-2">
+                <Phone size={16} className="text-[#ea6a00]" />
+                +7 708 491 4880
+              </p>
+            </div>
+          </div>
           <button
             type="button"
             onClick={() => auth && void signOut(auth)}
@@ -683,16 +712,19 @@ export default function Home() {
 
           <button
             type="button"
-            onClick={() => setIsAdminOpen(true)}
+            onClick={() =>
+              isAdmin ? setIsAdminOpen(true) : auth && void signOut(auth)
+            }
             aria-label="Открыть админ-панель"
             title="Админ-панель"
-            className={`relative ml-auto inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border transition hover:border-[#ea6a00]/30 hover:bg-orange-50 hover:text-[#ea6a00] lg:ml-0 lg:justify-self-end ${
+            className={`relative ml-auto inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-lg border px-3 transition hover:border-[#ea6a00]/30 hover:bg-orange-50 hover:text-[#ea6a00] lg:ml-0 lg:justify-self-end ${
               isAdmin
-                ? "border-[#ea6a00]/30 bg-orange-50 text-[#ea6a00]"
-                : "border-slate-200 text-slate-400"
+                ? "w-11 border-[#ea6a00]/30 bg-orange-50 text-[#ea6a00]"
+                : "border-slate-200 bg-white text-slate-500"
             }`}
           >
-            <ShieldCheck size={19} />
+            {isAdmin ? <ShieldCheck size={19} /> : <LogOut size={18} />}
+            {!isAdmin ? <span className="hidden text-sm font-semibold sm:inline">Выйти</span> : null}
             {isAdmin ? (
               <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-emerald-500" />
             ) : null}
@@ -847,7 +879,7 @@ export default function Home() {
 
       <AdminForm
         user={user}
-        isOpen={isAdminOpen}
+        isOpen={isAdmin && isAdminOpen}
         onClose={() => setIsAdminOpen(false)}
         topicOptions={topicOptions}
         formatOptions={knowledgeFormatOptions}

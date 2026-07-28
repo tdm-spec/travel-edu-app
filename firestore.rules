@@ -73,5 +73,10 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time;
       allow update, delete: if false;
     }
+
+    match /importHistory/{eventId} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
+    }
   }
 }
