@@ -16,6 +16,7 @@ type ImportRequest = {
   idToken?: string;
   accessCode?: string;
   archiveMissing?: boolean;
+  allCrmIds?: string[];
   users?: ImportUser[];
 };
 
@@ -442,9 +443,17 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.archiveMissing) {
+      const archiveCrmIds = new Set(
+        (Array.isArray(body.allCrmIds) && body.allCrmIds.length
+          ? body.allCrmIds
+          : Array.from(importedCrmIds)
+        )
+          .map((crmId) => crmId.trim())
+          .filter(Boolean)
+      );
       const existingUsers = await listAccessUsers(accessToken);
       for (const user of existingUsers) {
-        if (!importedCrmIds.has(user.crmId)) {
+        if (!archiveCrmIds.has(user.crmId)) {
           writes.push(archiveWrite(user.name));
         }
 

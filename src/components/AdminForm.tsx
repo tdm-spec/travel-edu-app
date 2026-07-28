@@ -65,6 +65,8 @@ import type {
 } from "@/types/material";
 import type { AccessUser } from "@/types/access-user";
 
+const CRM_IMPORT_BATCH_SIZE = 12;
+
 type AdminFormProps = {
   user: User | null;
   isOpen: boolean;
@@ -813,26 +815,65 @@ export function AdminForm({
     setMessage("");
 
     try {
-      const response = await fetch("/api/admin/import-users", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          idToken: await user.getIdToken(),
-          accessCode: importAccessCode.trim(),
-          archiveMissing: importArchiveMissing,
-          users: importPreview.validUsers
-        })
-      });
-      const result = (await response.json()) as {
-        message?: string;
-        created?: number;
-        updated?: number;
-        skipped?: number;
-        imported?: number;
+      const idToken = await user.getIdToken();
+      const batches: ParsedImportUser[][] = [];
+
+      for (
+        let index = 0;
+        index < importPreview.validUsers.length;
+        index += CRM_IMPORT_BATCH_SIZE
+      ) {
+        batches.push(
+          importPreview.validUsers.slice(index, index + CRM_IMPORT_BATCH_SIZE)
+        );
+      }
+
+      const result = {
+        created: 0,
+        updated: 0,
+        skipped:
+          importPreview.skippedMissing +
+          importPreview.skippedBlocked +
+          importPreview.duplicateIds +
+          importPreview.duplicateLogins,
+        imported: 0
       };
 
-      if (!response.ok) {
-        throw new Error(result.message ?? "Импорт не выполнен.");
+      for (const [batchIndex, batch] of batches.entries()) {
+        setMessage(
+          `Импорт пользователей: партия ${batchIndex + 1} из ${batches.length}.`
+        );
+
+        const response = await fetch("/api/admin/import-users", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            idToken,
+            accessCode: importAccessCode.trim(),
+            archiveMissing: importArchiveMissing && batchIndex === batches.length - 1,
+            allCrmIds:
+              importArchiveMissing && batchIndex === batches.length - 1
+                ? importPreview.validUsers.map((importUser) => importUser.crmId)
+                : undefined,
+            users: batch
+          })
+        });
+        const batchResult = (await response.json()) as {
+          message?: string;
+          created?: number;
+          updated?: number;
+          skipped?: number;
+          imported?: number;
+        };
+
+        if (!response.ok) {
+          throw new Error(batchResult.message ?? "Импорт не выполнен.");
+        }
+
+        result.created += batchResult.created ?? 0;
+        result.updated += batchResult.updated ?? 0;
+        result.skipped += batchResult.skipped ?? 0;
+        result.imported += batchResult.imported ?? 0;
       }
 
       setMessage(
