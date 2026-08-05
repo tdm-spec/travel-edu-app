@@ -17,11 +17,14 @@ import {
   query,
   runTransaction,
   serverTimestamp,
-  Timestamp
+  setDoc,
+  Timestamp,
+  where
 } from "firebase/firestore";
 import {
   BookOpen,
   CalendarDays,
+  ExternalLink,
   FolderOpen,
   GraduationCap,
   LogOut,
@@ -29,7 +32,8 @@ import {
   Menu,
   Phone,
   Search,
-  ShieldCheck
+  ShieldCheck,
+  X
 } from "lucide-react";
 import Image from "next/image";
 import { AdminForm } from "@/components/AdminForm";
@@ -116,6 +120,10 @@ export default function Home() {
     null
   );
   const [selectedTrack, setSelectedTrack] = useState<LearningTrack | null>(null);
+  const [selectedTestUrl, setSelectedTestUrl] = useState<string | null>(null);
+  const [completedMaterialIds, setCompletedMaterialIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [user, setUser] = useState<User | null>(null);
@@ -257,6 +265,38 @@ export default function Home() {
 
   useEffect(() => {
     if (!user || !hasAccess || !db) {
+      setCompletedMaterialIds(new Set());
+      return;
+    }
+
+    const progressQuery = query(
+      collection(db, "learningProgress"),
+      where("userId", "==", user.uid)
+    );
+
+    return onSnapshot(
+      progressQuery,
+      (snapshot) => {
+        setCompletedMaterialIds(
+          new Set(
+            snapshot.docs
+              .map((progressDoc) => progressDoc.data().materialId)
+              .filter(
+                (materialId): materialId is string =>
+                  typeof materialId === "string"
+              )
+          )
+        );
+      },
+      (error) => {
+        console.warn("Learning progress could not be loaded:", error.message);
+        setCompletedMaterialIds(new Set());
+      }
+    );
+  }, [hasAccess, user]);
+
+  useEffect(() => {
+    if (!user || !hasAccess || !db) {
       return;
     }
 
@@ -312,6 +352,7 @@ export default function Home() {
             duration: Number(data.duration ?? 0),
             trendingStamp: data.trendingStamp || undefined,
             views: Number(data.views ?? 0),
+            testUrl: data.testUrl ?? "",
             createdAt,
             tab: data.tab ?? (data.type === "video" ? "webinars" : "knowledge"),
             archived: Boolean(data.archived)
@@ -354,6 +395,7 @@ export default function Home() {
             materialIds: data.materialIds ?? [],
             tags: data.tags ?? [],
             coverUrl: data.coverUrl ?? "",
+            testUrl: data.testUrl ?? "",
             createdAt,
             archived: Boolean(data.archived)
           } as LearningTrack;
@@ -484,6 +526,41 @@ export default function Home() {
   function closeMaterial() {
     setSelectedMaterial(null);
     updateUrl({ material: null });
+  }
+
+  async function completeMaterial(material: Material) {
+    if (!user || !hasAccess) {
+      return;
+    }
+
+    setCompletedMaterialIds((current) => new Set(current).add(material.id));
+
+    if (!db) {
+      return;
+    }
+
+    try {
+      await setDoc(
+        doc(db, "learningProgress", `${user.uid}_${material.id}`),
+        {
+          userId: user.uid,
+          materialId: material.id,
+          materialTitle: material.title,
+          completedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+    } catch (error) {
+      console.warn("Learning progress could not be saved:", error);
+    }
+  }
+
+  function openTest(url: string) {
+    const normalizedUrl = url.trim();
+
+    if (normalizedUrl) {
+      setSelectedTestUrl(normalizedUrl);
+    }
   }
 
   function openTrack(track: LearningTrack) {
@@ -618,6 +695,16 @@ export default function Home() {
     startIndex + PAGE_SIZE
   );
   const paginatedTracks = visibleTracks.slice(startIndex, startIndex + PAGE_SIZE);
+  const isTrackCompleted = (track: LearningTrack) => {
+    const trackMaterials = track.materialIds.filter((id) =>
+      activeMaterials.some((material) => material.id === id)
+    );
+
+    return (
+      trackMaterials.length > 0 &&
+      trackMaterials.every((id) => completedMaterialIds.has(id))
+    );
+  };
 
   if (isAuthLoading || (user && isAccessLoading)) {
     return (
@@ -829,6 +916,7 @@ export default function Home() {
                             activeMaterials.some((material) => material.id === id)
                           ).length
                         }
+                        isCompleted={isTrackCompleted(track)}
                         onOpen={openTrack}
                       />
                     ))
@@ -836,6 +924,7 @@ export default function Home() {
                       <MaterialCard
                         key={material.id}
                         material={material}
+                        isCompleted={completedMaterialIds.has(material.id)}
                         onOpen={openMaterial}
                       />
                     ))}
@@ -890,11 +979,63 @@ export default function Home() {
       <TrackModal
         track={selectedTrack}
         materials={activeMaterials}
+        completedMaterialIds={completedMaterialIds}
         onClose={closeTrack}
         onOpenMaterial={openMaterial}
+        onOpenTest={openTest}
       />
 
-      <ContentModal material={selectedMaterial} onClose={closeMaterial} />
+      <ContentModal
+        material={selectedMaterial}
+        isCompleted={
+          selectedMaterial ? completedMaterialIds.has(selectedMaterial.id) : false
+        }
+        onClose={closeMaterial}
+        onComplete={completeMaterial}
+        onOpenTest={openTest}
+      />
+
+      {selectedTestUrl ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
+          <div className="flex h-[calc(100vh-1.5rem)] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl sm:h-[calc(100vh-2rem)]">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-950">
+                  Тестирование
+                </p>
+                <p className="truncate text-xs text-slate-400">
+                  {selectedTestUrl}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={selectedTestUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-[#ea6a00]/30 hover:bg-orange-50 hover:text-[#ea6a00]"
+                >
+                  <ExternalLink size={16} />
+                  Открыть отдельно
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTestUrl(null)}
+                  aria-label="Закрыть тестирование"
+                  className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+            <iframe
+              src={selectedTestUrl}
+              title="Тестирование"
+              className="min-h-0 flex-1 bg-white"
+              allow="clipboard-read; clipboard-write"
+            />
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

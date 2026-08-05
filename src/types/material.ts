@@ -22,6 +22,7 @@ export type Material = {
   archived?: boolean;
   trendingStamp?: TrendingStamp | null;
   views?: number;
+  testUrl?: string;
 };
 
 export type LearningTrack = {
@@ -33,6 +34,7 @@ export type LearningTrack = {
   coverUrl?: string;
   createdAt: Date;
   archived?: boolean;
+  testUrl?: string;
 };
 
 export type FilterState = {

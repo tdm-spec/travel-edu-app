@@ -124,6 +124,7 @@ const initialMaterialForm = {
   description: "",
   type: "video" as MaterialType,
   url: "",
+  testUrl: "",
   coverUrl: "",
   category: "",
   tags: "",
@@ -138,6 +139,7 @@ const initialTrackForm = {
   title: "",
   description: "",
   coverUrl: "",
+  testUrl: "",
   tags: ""
 };
 
@@ -513,6 +515,7 @@ export function AdminForm({
         description: materialForm.description.trim(),
         type: materialForm.type,
         url: materialForm.url.trim(),
+        testUrl: materialForm.testUrl.trim(),
         coverUrl: materialForm.coverUrl.trim(),
         category: splitList(materialForm.category),
         tags: splitList(materialForm.tags),
@@ -559,6 +562,7 @@ export function AdminForm({
         title: trackForm.title.trim(),
         description: trackForm.description.trim(),
         coverUrl: trackForm.coverUrl.trim(),
+        testUrl: trackForm.testUrl.trim(),
         tags: splitList(trackForm.tags),
         materialIds: trackMaterialIds,
         archived: false,
@@ -598,6 +602,7 @@ export function AdminForm({
           description: source.description,
           type: source.type,
           url: source.url,
+          testUrl: source.testUrl ?? "",
           coverUrl: source.coverUrl ?? "",
           category: source.category,
           tags: source.tags ?? [],
@@ -647,6 +652,7 @@ export function AdminForm({
           materialIds: source.materialIds,
           tags: source.tags ?? [],
           coverUrl: source.coverUrl ?? "",
+          testUrl: source.testUrl ?? "",
           createdAt: source.createdAt,
           archived: Boolean(source.archived),
           ...payload
@@ -1244,6 +1250,12 @@ function MaterialCreateForm({
           onChange={(value) => onFormChange({ ...form, url: value })}
           required
         />
+        <TextField
+          label="Ссылка на тестирование"
+          value={form.testUrl}
+          placeholder="https://testograf-app.pages.dev/#t=..."
+          onChange={(value) => onFormChange({ ...form, testUrl: value })}
+        />
         <label className="text-sm font-medium text-slate-700">
           Тип материала
           <select
@@ -1402,6 +1414,12 @@ function TrackCreateForm({
             value={form.coverUrl}
             placeholder="https://..."
             onChange={(value) => onFormChange({ ...form, coverUrl: value })}
+          />
+          <TextField
+            label="Ссылка на тестирование"
+            value={form.testUrl}
+            placeholder="https://testograf-app.pages.dev/#t=..."
+            onChange={(value) => onFormChange({ ...form, testUrl: value })}
           />
           <TextField
             label="Теги трека"
@@ -2262,6 +2280,7 @@ function MaterialEditor({
   const [category, setCategory] = useState(material.category.join(", "));
   const [coverUrl, setCoverUrl] = useState(material.coverUrl ?? "");
   const [url, setUrl] = useState(material.url);
+  const [testUrl, setTestUrl] = useState(material.testUrl ?? "");
   const [format, setFormat] = useState(material.format);
   const [speakerName, setSpeakerName] = useState(material.author.name);
   const [speakerCompany, setSpeakerCompany] = useState(
@@ -2278,6 +2297,11 @@ function MaterialEditor({
         <TextField label="Название" value={title} onChange={setTitle} />
         <TextField label="Формат" value={format} onChange={setFormat} />
         <TextField label="URL" value={url} onChange={setUrl} />
+        <TextField
+          label="Ссылка на тестирование"
+          value={testUrl}
+          onChange={setTestUrl}
+        />
         <TextField label="Обложка" value={coverUrl} onChange={setCoverUrl} />
         <TextField label="Темы" value={category} onChange={setCategory} />
         <TextField label="Теги" value={tags} onChange={setTags} />
@@ -2329,6 +2353,7 @@ function MaterialEditor({
             title,
             description,
             url,
+            testUrl,
             coverUrl,
             format,
             category: splitList(category),
@@ -2364,6 +2389,7 @@ function TrackEditor({
   const [description, setDescription] = useState(track.description);
   const [tags, setTags] = useState((track.tags ?? []).join(", "));
   const [coverUrl, setCoverUrl] = useState(track.coverUrl ?? "");
+  const [testUrl, setTestUrl] = useState(track.testUrl ?? "");
   const [selectedIds, setSelectedIds] = useState(track.materialIds);
 
   function toggleMaterial(id: string) {
@@ -2389,6 +2415,11 @@ function TrackEditor({
       <div className="grid gap-4 md:grid-cols-2">
         <TextField label="Название" value={title} onChange={setTitle} />
         <TextField label="Обложка" value={coverUrl} onChange={setCoverUrl} />
+        <TextField
+          label="Ссылка на тестирование"
+          value={testUrl}
+          onChange={setTestUrl}
+        />
         <TextField label="Теги" value={tags} onChange={setTags} />
         <label className="text-sm font-medium text-slate-700 md:col-span-2">
           Описание
@@ -2413,6 +2444,7 @@ function TrackEditor({
             title,
             description,
             coverUrl,
+            testUrl,
             tags: splitList(tags),
             materialIds: selectedIds
           })

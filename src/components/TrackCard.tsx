@@ -1,21 +1,29 @@
 "use client";
 
-import { FolderOpen, ListOrdered } from "lucide-react";
+import { CheckCircle2, FolderOpen, ListOrdered } from "lucide-react";
 import Image from "next/image";
 import type { LearningTrack } from "@/types/material";
 
 type TrackCardProps = {
   track: LearningTrack;
   count: number;
+  isCompleted?: boolean;
   onOpen: (track: LearningTrack) => void;
 };
 
-export function TrackCard({ track, count, onOpen }: TrackCardProps) {
+export function TrackCard({
+  track,
+  count,
+  isCompleted = false,
+  onOpen
+}: TrackCardProps) {
   return (
     <button
       type="button"
       onClick={() => onOpen(track)}
-      className="ticket-card group flex h-[35rem] flex-col overflow-hidden rounded-xl bg-white text-left shadow-sm ring-1 ring-slate-200/70 transition hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#ea6a00]"
+      className={`ticket-card group flex h-[35rem] flex-col overflow-hidden rounded-xl bg-white text-left shadow-sm ring-1 ring-slate-200/70 transition hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#ea6a00] ${
+        isCompleted ? "opacity-70 saturate-50" : ""
+      }`}
     >
       <div className="relative aspect-[16/10] overflow-hidden bg-gradient-to-br from-orange-50 via-white to-slate-100">
         {track.coverUrl ? (
@@ -40,6 +48,12 @@ export function TrackCard({ track, count, onOpen }: TrackCardProps) {
         <div className="absolute right-4 top-4 rounded bg-white/90 px-2 py-1.5 shadow-sm">
           <div className="ticket-barcode h-5 w-14 opacity-80" />
         </div>
+        {isCompleted ? (
+          <div className="absolute bottom-4 right-4 z-10 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 shadow-sm ring-1 ring-emerald-100">
+            <CheckCircle2 size={14} />
+            Завершено
+          </div>
+        ) : null}
       </div>
 
       <div className="flex flex-1 flex-col gap-4 border-t-2 border-dashed border-slate-200 p-5">

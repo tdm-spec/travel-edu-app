@@ -1,12 +1,15 @@
 "use client";
 
-import { Copy, ExternalLink, X } from "lucide-react";
+import { CheckCircle2, Copy, ExternalLink, X } from "lucide-react";
 import { getYouTubeEmbedUrl } from "@/lib/youtube";
 import type { Material } from "@/types/material";
 
 type ContentModalProps = {
   material: Material | null;
+  isCompleted?: boolean;
   onClose: () => void;
+  onComplete?: (material: Material) => void;
+  onOpenTest?: (url: string) => void;
 };
 
 function getGoogleDrivePreviewUrl(url: string) {
@@ -69,7 +72,13 @@ function getFilePreviewUrl(url: string, format: string) {
   )}&embedded=true`;
 }
 
-export function ContentModal({ material, onClose }: ContentModalProps) {
+export function ContentModal({
+  material,
+  isCompleted = false,
+  onClose,
+  onComplete,
+  onOpenTest
+}: ContentModalProps) {
   if (!material) {
     return null;
   }
@@ -85,9 +94,9 @@ export function ContentModal({ material, onClose }: ContentModalProps) {
       : `${window.location.origin}${window.location.pathname}?material=${material.id}`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
-      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 sm:p-4">
+      <div className="flex h-[calc(100vh-1.5rem)] max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl sm:h-[calc(100vh-2rem)]">
+        <div className="shrink-0 flex items-start justify-between gap-4 border-b border-slate-100 p-5">
           <div className="min-w-0">
             <p className="mb-1 text-sm font-medium text-[#ea6a00]">
               {material.format}
@@ -109,8 +118,8 @@ export function ContentModal({ material, onClose }: ContentModalProps) {
           </button>
         </div>
 
-        <div className="bg-slate-100 p-3 sm:p-5">
-          <div className="aspect-video overflow-hidden rounded-xl bg-white shadow-sm">
+        <div className="min-h-0 flex-1 bg-slate-100 p-3 sm:p-5">
+          <div className="h-full min-h-0 overflow-hidden rounded-xl bg-white shadow-sm">
             <iframe
               src={previewUrl}
               title={material.title}
@@ -125,7 +134,7 @@ export function ContentModal({ material, onClose }: ContentModalProps) {
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 border-t border-slate-100 p-5">
+        <div className="shrink-0 flex flex-col gap-3 border-t border-slate-100 p-5">
           <div className="flex flex-wrap gap-2">
             {[...material.category, ...(material.tags ?? [])].map((tag) => (
               <span
@@ -139,6 +148,34 @@ export function ContentModal({ material, onClose }: ContentModalProps) {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="truncate text-xs text-slate-400">{shareUrl}</p>
             <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => onComplete?.(material)}
+                disabled={isCompleted}
+                className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition ${
+                  isCompleted
+                    ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"
+                    : "border border-slate-200 text-slate-700 hover:border-[#ea6a00]/30 hover:bg-orange-50 hover:text-[#ea6a00]"
+                }`}
+              >
+                <CheckCircle2 size={16} />
+                {isCompleted ? "Материал изучен" : "Завершить изучение"}
+              </button>
+              {material.testUrl ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenTest?.(material.testUrl ?? "")}
+                  disabled={!isCompleted}
+                  className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition ${
+                    isCompleted
+                      ? "bg-[#ea6a00] text-white hover:bg-[#d85f00]"
+                      : "cursor-not-allowed bg-slate-100 text-slate-400"
+                  }`}
+                >
+                  <ExternalLink size={16} />
+                  Перейти к тестированию
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => navigator.clipboard?.writeText(shareUrl)}

@@ -4,6 +4,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "PSN HUB",
   description: "Центр экспертных знаний и профессионального развития",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+    apple: "/favicon.svg"
+  },
   robots: {
     index: false,
     follow: false,

@@ -53,6 +53,27 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /learningProgress/{progressId} {
+      allow get, list: if isAdmin()
+        || (isActiveUser() && resource.data.userId == request.auth.uid);
+      allow create, update: if isActiveUser()
+        && request.resource.data.keys().hasOnly([
+          'userId',
+          'materialId',
+          'materialTitle',
+          'completedAt'
+        ])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.materialId is string
+        && request.resource.data.materialTitle is string
+        && request.resource.data.completedAt == request.time
+        && (
+          !exists(/databases/$(database)/documents/learningProgress/$(progressId))
+          || resource.data.userId == request.auth.uid
+        );
+      allow delete: if false;
+    }
+
     match /accessUsers/{userId} {
       allow get: if isAdmin() || (signedIn() && request.auth.uid == userId);
       allow list, create, update, delete: if isAdmin();

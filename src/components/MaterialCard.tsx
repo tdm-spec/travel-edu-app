@@ -2,6 +2,7 @@
 
 import {
   Building2,
+  CheckCircle2,
   Clock3,
   Eye,
   FileText,
@@ -13,10 +14,15 @@ import type { Material } from "@/types/material";
 
 type MaterialCardProps = {
   material: Material;
+  isCompleted?: boolean;
   onOpen: (material: Material) => void;
 };
 
-export function MaterialCard({ material, onOpen }: MaterialCardProps) {
+export function MaterialCard({
+  material,
+  isCompleted = false,
+  onOpen
+}: MaterialCardProps) {
   const CoverIcon = material.type === "video" ? Play : FileText;
   const visibleTags = [...material.category, ...(material.tags ?? [])].slice(0, 4);
 
@@ -24,7 +30,9 @@ export function MaterialCard({ material, onOpen }: MaterialCardProps) {
     <button
       type="button"
       onClick={() => onOpen(material)}
-      className="group flex h-[35rem] flex-col overflow-hidden rounded-xl bg-white text-left shadow-sm transition hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#ea6a00]"
+      className={`group flex h-[35rem] flex-col overflow-hidden rounded-xl bg-white text-left shadow-sm transition hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#ea6a00] ${
+        isCompleted ? "opacity-70 saturate-50" : ""
+      }`}
     >
       <div className="relative aspect-[16/10] overflow-hidden bg-gradient-to-br from-orange-50 via-white to-slate-100">
         {material.coverUrl ? (
@@ -52,6 +60,12 @@ export function MaterialCard({ material, onOpen }: MaterialCardProps) {
         {material.tab === "webinars" && material.trendingStamp ? (
           <div className="absolute bottom-5 left-5 z-30 -rotate-6 rounded-md border-2 border-white/80 bg-white/10 px-3 py-1.5 font-mono text-xs font-bold uppercase tracking-widest text-white/80 shadow-sm backdrop-blur-[1px]">
             {material.trendingStamp}
+          </div>
+        ) : null}
+        {isCompleted ? (
+          <div className="absolute bottom-5 right-5 z-30 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 shadow-sm ring-1 ring-emerald-100">
+            <CheckCircle2 size={14} />
+            Изучено
           </div>
         ) : null}
       </div>
