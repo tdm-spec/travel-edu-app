@@ -996,9 +996,9 @@ export default function Home() {
       />
 
       {selectedTestUrl ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
-          <div className="flex h-[calc(100vh-1.5rem)] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl sm:h-[calc(100vh-2rem)]">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-0 sm:p-4">
+          <div className="flex h-[100dvh] w-full max-w-6xl flex-col overflow-hidden bg-white shadow-2xl sm:h-[calc(100vh-2rem)] sm:rounded-xl">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5 sm:py-4">
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-950">
                   Тестирование
@@ -1007,12 +1007,12 @@ export default function Home() {
                   {selectedTestUrl}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 <a
                   href={selectedTestUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-[#ea6a00]/30 hover:bg-orange-50 hover:text-[#ea6a00]"
+                  className="hidden items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-[#ea6a00]/30 hover:bg-orange-50 hover:text-[#ea6a00] sm:inline-flex"
                 >
                   <ExternalLink size={16} />
                   Открыть отдельно

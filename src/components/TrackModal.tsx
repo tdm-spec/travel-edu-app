@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, ExternalLink, LockKeyhole, X } from "lucide-react";
+import { CheckCircle2, ExternalLink, LockKeyhole, Share2, X } from "lucide-react";
 import type { LearningTrack, Material } from "@/types/material";
 
 type TrackModalProps = {
@@ -11,6 +11,15 @@ type TrackModalProps = {
   onOpenMaterial: (material: Material) => void;
   onOpenTest?: (url: string) => void;
 };
+
+async function shareLink(url: string, title: string) {
+  if (navigator.share) {
+    await navigator.share({ title, url });
+    return;
+  }
+
+  await navigator.clipboard?.writeText(url);
+}
 
 export function TrackModal({
   track,
@@ -39,17 +48,17 @@ export function TrackModal({
       : `${window.location.origin}${window.location.pathname}?track=${track.id}`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
-      <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-0 sm:p-4">
+      <div className="flex h-[100dvh] w-full max-w-4xl flex-col overflow-hidden bg-white shadow-2xl sm:max-h-[92vh] sm:rounded-xl">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 p-4 sm:gap-4 sm:p-5">
           <div className="min-w-0">
             <p className="mb-1 text-sm font-medium text-orange-600">
               Обучающий трек
             </p>
-            <h2 className="text-xl font-semibold leading-tight text-slate-950">
+            <h2 className="line-clamp-3 text-xl font-semibold leading-tight text-slate-950 sm:line-clamp-none">
               {track.title}
             </h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
+            <p className="mt-2 line-clamp-3 max-w-3xl text-sm leading-6 text-slate-500 sm:line-clamp-none">
               {track.description}
             </p>
           </div>
@@ -57,13 +66,13 @@ export function TrackModal({
             type="button"
             onClick={onClose}
             aria-label="Закрыть"
-            className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            className="shrink-0 rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
           >
             <X size={20} />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
           <div className="space-y-3">
             {orderedMaterials.map((material, index) => {
               const isCompleted = completedMaterialIds.has(material.id);
@@ -73,7 +82,7 @@ export function TrackModal({
                   key={material.id}
                   type="button"
                   onClick={() => onOpenMaterial(material)}
-                  className={`flex w-full items-start gap-4 rounded-xl border p-4 text-left transition hover:border-[#ea6a00]/30 hover:bg-orange-50 ${
+                  className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left transition hover:border-[#ea6a00]/30 hover:bg-orange-50 sm:gap-4 sm:p-4 ${
                     isCompleted
                       ? "border-emerald-100 bg-emerald-50/50 opacity-75 saturate-50"
                       : "border-slate-200 bg-white"
@@ -82,8 +91,8 @@ export function TrackModal({
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#ea6a00] text-sm font-semibold text-white">
                     {index + 1}
                   </span>
-                  <span className="min-w-0">
-                    <span className="block text-sm font-semibold text-slate-950">
+                  <span className="min-w-0 flex-1">
+                    <span className="line-clamp-2 block text-sm font-semibold text-slate-950">
                       {material.title}
                     </span>
                     <span className="mt-1 line-clamp-2 block text-sm leading-6 text-slate-500">
@@ -91,7 +100,7 @@ export function TrackModal({
                     </span>
                   </span>
                   {isCompleted ? (
-                    <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                    <span className="hidden shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100 sm:inline-flex">
                       <CheckCircle2 size={14} />
                       Изучено
                     </span>
@@ -102,20 +111,20 @@ export function TrackModal({
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 border-t border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex shrink-0 flex-col gap-3 border-t border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
           <div className="min-w-0">
             <p className="truncate text-xs text-slate-400">{shareUrl}</p>
             <p className="mt-1 text-xs font-medium text-slate-500">
               Завершено материалов: {completedCount} из {orderedMaterials.length}
             </p>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
             {track.testUrl ? (
               <button
                 type="button"
                 onClick={() => onOpenTest?.(track.testUrl ?? "")}
                 disabled={!isTrackCompleted}
-                className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition ${
+                className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition sm:min-h-0 ${
                   isTrackCompleted
                     ? "bg-[#ea6a00] text-white hover:bg-[#d85f00]"
                     : "cursor-not-allowed bg-slate-100 text-slate-400"
@@ -131,11 +140,11 @@ export function TrackModal({
             ) : null}
             <button
               type="button"
-              onClick={() => navigator.clipboard?.writeText(shareUrl)}
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-[#ea6a00]/30 hover:bg-orange-50 hover:text-[#ea6a00]"
+              onClick={() => void shareLink(shareUrl, track.title)}
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-[#ea6a00]/30 hover:bg-orange-50 hover:text-[#ea6a00] sm:min-h-0"
             >
-              <ExternalLink size={16} />
-              Скопировать ссылку
+              <Share2 size={16} />
+              Поделиться
             </button>
           </div>
         </div>
