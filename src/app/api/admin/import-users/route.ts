@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "edge";
 
 type ImportUser = {
-  crmId: string;
+  crmId?: string;
   login: string;
   displayName: string;
   email?: string;
@@ -83,6 +83,16 @@ async function loginToEmail(login: string) {
     .join("");
 
   return `login-${hash}@${USER_EMAIL_DOMAIN}`;
+}
+
+async function stableUidFromLogin(login: string) {
+  const bytes = new TextEncoder().encode(normalizeLogin(login));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hash = Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+
+  return `crm_${hash.slice(0, 30)}`;
 }
 
 function getServiceAccount(): ServiceAccount {
@@ -224,13 +234,13 @@ async function findAuthUserByEmail(token: string, email: string) {
 
 async function upsertAuthUser(
   token: string,
-  crmId: string,
+  uid: string,
   authEmail: string,
   accessCode: string,
   displayName: string,
   disabled: boolean
 ) {
-  const existingById = await findAuthUserById(token, crmId);
+  const existingById = await findAuthUserById(token, uid);
 
   if (existingById) {
     await identityToolkit(token, "update", {
@@ -258,7 +268,7 @@ async function upsertAuthUser(
   }
 
   const created = await identityToolkit(token, "signUp", {
-    localId: crmId,
+    localId: uid,
     email: authEmail,
     password: accessCode,
     displayName,
@@ -266,7 +276,7 @@ async function upsertAuthUser(
     emailVerified: true
   });
 
-  return { uid: created.localId ?? crmId, created: true };
+  return { uid: created.localId ?? uid, created: true };
 }
 
 function firestoreValue(value: unknown): Record<string, unknown> {
@@ -327,8 +337,16 @@ function accessUserWrite(uid: string, user: ImportUser) {
   };
 }
 
+type AccessUserRecord = {
+  name: string;
+  uid: string;
+  crmId: string;
+  normalizedLogin: string;
+  email: string;
+};
+
 async function listAccessUsers(token: string) {
-  const result: Array<{ name: string; crmId: string }> = [];
+  const result: AccessUserRecord[] = [];
   let pageToken = "";
 
   do {
@@ -349,7 +367,11 @@ async function listAccessUsers(token: string) {
     const data = (await response.json()) as {
       documents?: Array<{
         name: string;
-        fields?: { crmId?: { stringValue?: string } };
+        fields?: {
+          crmId?: { stringValue?: string };
+          normalizedLogin?: { stringValue?: string };
+          email?: { stringValue?: string };
+        };
       }>;
       nextPageToken?: string;
     };
@@ -358,7 +380,10 @@ async function listAccessUsers(token: string) {
       const fallbackId = document.name.split("/").pop() ?? "";
       result.push({
         name: document.name,
-        crmId: document.fields?.crmId?.stringValue ?? fallbackId
+        uid: fallbackId,
+        crmId: document.fields?.crmId?.stringValue ?? fallbackId,
+        normalizedLogin: document.fields?.normalizedLogin?.stringValue ?? "",
+        email: (document.fields?.email?.stringValue ?? "").toLowerCase()
       });
     }
 
@@ -366,6 +391,25 @@ async function listAccessUsers(token: string) {
   } while (pageToken);
 
   return result;
+}
+
+async function resolveImportIdentity(
+  user: ImportUser,
+  existingUsers: AccessUserRecord[]
+) {
+  const providedCrmId = user.crmId?.trim() ?? "";
+  const normalizedLogin = normalizeLogin(user.login);
+  const email = (user.email ?? "").trim().toLowerCase();
+  const existing =
+    existingUsers.find((item) => providedCrmId && item.crmId === providedCrmId) ??
+    existingUsers.find((item) => item.normalizedLogin === normalizedLogin) ??
+    existingUsers.find((item) => email && item.email === email);
+  const crmId = providedCrmId || existing?.crmId || existing?.uid || await stableUidFromLogin(user.login);
+
+  return {
+    uid: existing?.uid || crmId,
+    crmId
+  };
 }
 
 function archiveWrite(documentName: string) {
@@ -395,7 +439,7 @@ export async function POST(request: NextRequest) {
 
     const inputUsers = Array.isArray(body.users) ? body.users : [];
     const validUsers = inputUsers.filter(
-      (user) => user.crmId && user.login && user.isBlocked !== true
+      (user) => user.login && user.isBlocked !== true
     );
 
     if (!validUsers.length) {
@@ -404,6 +448,7 @@ export async function POST(request: NextRequest) {
 
     const serviceAccount = getServiceAccount();
     const accessToken = await getAccessToken(serviceAccount);
+    const existingAccessUsers = await listAccessUsers(accessToken);
     const importedCrmIds = new Set<string>();
     const importedLogins = new Set<string>();
     const writes: Array<Record<string, unknown>> = [];
@@ -412,7 +457,8 @@ export async function POST(request: NextRequest) {
     let skipped = inputUsers.length - validUsers.length;
 
     for (const user of validUsers) {
-      const crmId = user.crmId.trim();
+      const identity = await resolveImportIdentity(user, existingAccessUsers);
+      const crmId = identity.crmId;
       const normalizedLogin = normalizeLogin(user.login);
 
       if (importedCrmIds.has(crmId) || importedLogins.has(normalizedLogin)) {
@@ -423,7 +469,7 @@ export async function POST(request: NextRequest) {
       const authEmail = await loginToEmail(user.login);
       const result = await upsertAuthUser(
         accessToken,
-        crmId,
+        identity.uid,
         authEmail,
         body.accessCode.trim(),
         user.displayName || user.login,
@@ -435,7 +481,7 @@ export async function POST(request: NextRequest) {
 
       importedCrmIds.add(crmId);
       importedLogins.add(normalizedLogin);
-      writes.push(accessUserWrite(result.uid, user));
+      writes.push(accessUserWrite(result.uid, { ...user, crmId }));
 
       if (writes.length >= 400) {
         await commitFirestoreWrites(accessToken, writes.splice(0));
@@ -451,8 +497,7 @@ export async function POST(request: NextRequest) {
           .map((crmId) => crmId.trim())
           .filter(Boolean)
       );
-      const existingUsers = await listAccessUsers(accessToken);
-      for (const user of existingUsers) {
+      for (const user of existingAccessUsers) {
         if (!archiveCrmIds.has(user.crmId)) {
           writes.push(archiveWrite(user.name));
         }

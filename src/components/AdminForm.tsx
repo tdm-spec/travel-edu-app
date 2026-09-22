@@ -95,6 +95,7 @@ type ImportPreview = {
   fileName: string;
   totalRows: number;
   validUsers: ParsedImportUser[];
+  hasStableIds: boolean;
   skippedMissing: number;
   skippedBlocked: number;
   duplicateIds: number;
@@ -179,9 +180,12 @@ function rowHasImportHeader(row: unknown[], aliases: string[]) {
 
 function findImportHeaderRow(rows: unknown[][]) {
   const idAliases = ["id", "crm id", "user id", "ид", "код", "id пользователя"];
-  const loginAliases = ["login", "username", "логин"];
+  const loginAliases = ["login", "username", "логин", "e-mail", "email", "почта"];
+  const nameAliases = ["display name", "name", "фио", "пользователь", "сотрудник"];
   const headerIndex = rows.findIndex(
-    (row) => rowHasImportHeader(row, idAliases) && rowHasImportHeader(row, loginAliases)
+    (row) =>
+      (rowHasImportHeader(row, idAliases) || rowHasImportHeader(row, nameAliases)) &&
+      rowHasImportHeader(row, loginAliases)
   );
 
   return headerIndex >= 0 ? headerIndex : 0;
@@ -212,7 +216,9 @@ function buildImportPreview(fileName: string, rows: unknown[][]): ImportPreview 
       "user id",
       "ид",
       "код",
-      "id пользователя"
+      "id пользователя",
+      "crm id пользователя",
+      "crm_id"
     ]);
     const rawLogin = getImportValue(record, ["login", "username", "логин"]);
     const firstName = getImportValue(record, [
@@ -228,9 +234,10 @@ function buildImportPreview(fileName: string, rows: unknown[][]): ImportPreview 
       "фамилия (рус)"
     ]);
     const displayName =
-      getImportValue(record, ["display name", "name", "фио"]) ||
+      getImportValue(record, ["display name", "name", "фио", "пользователь", "сотрудник"]) ||
       [firstName, lastName].filter(Boolean).join(" ");
-    const login = rawLogin || displayName;
+    const email = getImportValue(record, ["email", "e-mail", "почта"]);
+    const login = rawLogin || email || displayName;
     const blocked = getImportValue(record, ["blocked", "заблокирован"]);
     const isBlocked = blocked ? isTruthyImportValue(blocked) : false;
 
@@ -238,14 +245,14 @@ function buildImportPreview(fileName: string, rows: unknown[][]): ImportPreview 
       crmId,
       login,
       displayName: displayName || login,
-      email: getImportValue(record, ["email", "e-mail", "почта"]),
+      email,
       phone: getImportValue(record, ["phone", "телефон"]),
       active: !isBlocked,
       isBlocked
     };
   });
   const validSourceUsers = users.filter(
-    (importUser) => importUser.crmId && importUser.login && !importUser.isBlocked
+    (importUser) => importUser.login && !importUser.isBlocked
   );
   const seenIds = new Set<string>();
   const seenLogins = new Set<string>();
@@ -257,7 +264,7 @@ function buildImportPreview(fileName: string, rows: unknown[][]): ImportPreview 
     const normalizedId = importUser.crmId.trim();
     const normalizedLogin = normalizeLogin(importUser.login);
 
-    if (seenIds.has(normalizedId)) {
+    if (normalizedId && seenIds.has(normalizedId)) {
       duplicateIds += 1;
       continue;
     }
@@ -267,7 +274,9 @@ function buildImportPreview(fileName: string, rows: unknown[][]): ImportPreview 
       continue;
     }
 
-    seenIds.add(normalizedId);
+    if (normalizedId) {
+      seenIds.add(normalizedId);
+    }
     seenLogins.add(normalizedLogin);
     validUsers.push(importUser);
   }
@@ -276,7 +285,8 @@ function buildImportPreview(fileName: string, rows: unknown[][]): ImportPreview 
     fileName,
     totalRows: users.length,
     validUsers,
-    skippedMissing: users.filter((importUser) => !importUser.crmId || !importUser.login)
+    hasStableIds: validUsers.every((importUser) => Boolean(importUser.crmId.trim())),
+    skippedMissing: users.filter((importUser) => !importUser.login)
       .length,
     skippedBlocked: users.filter((importUser) => importUser.isBlocked).length,
     duplicateIds,
@@ -804,7 +814,22 @@ export function AdminForm({
     }
 
     if (importAccessCode.trim().length < 12) {
-      setMessage("Код доступа должен быть не короче 12 символов.");
+      setMessage("Пароль для импорта должен быть не короче 12 символов.");
+      return;
+    }
+
+    if (importArchiveMissing && !importPreview.hasStableIds) {
+      setMessage(
+        "В этом файле нет отдельного CRM ID. Архивация отсутствующих отключена, чтобы не потерять доступ и прогресс действующих пользователей."
+      );
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Подтвердите импорт ${importPreview.validUsers.length} пользователей. Для них будет установлен указанный пароль. Уже пройденный прогресс сохранится у пользователей, найденных по CRM ID, логину или e-mail.`
+      )
+    ) {
       return;
     }
 
@@ -859,7 +884,9 @@ export function AdminForm({
             archiveMissing: importArchiveMissing && batchIndex === batches.length - 1,
             allCrmIds:
               importArchiveMissing && batchIndex === batches.length - 1
-                ? importPreview.validUsers.map((importUser) => importUser.crmId)
+                ? importPreview.validUsers
+                    .map((importUser) => importUser.crmId)
+                    .filter(Boolean)
                 : undefined,
             users: batch
           })
@@ -1689,7 +1716,7 @@ function CrmImportPanel({
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <ImportStat label="Всего строк" value={preview.totalRows} />
               <ImportStat label="К импорту" value={preview.validUsers.length} />
-              <ImportStat label="Без ID/логина" value={preview.skippedMissing} />
+              <ImportStat label="Без логина/e-mail" value={preview.skippedMissing} />
               <ImportStat label="Заблокированы" value={preview.skippedBlocked} />
               <ImportStat
                 label="Повторы"
@@ -1700,10 +1727,10 @@ function CrmImportPanel({
 
           <div className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
             <TextField
-              label="Актуальный код доступа"
+              label="Пароль для импортируемых пользователей"
               type="password"
               value={accessCode}
-              placeholder="Код, который получат пользователи"
+              placeholder="Задайте пароль перед импортом"
               onChange={(value) => {
                 setCopiedAccessCode(false);
                 onAccessCodeChange(value);
@@ -1718,7 +1745,7 @@ function CrmImportPanel({
               className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Copy size={17} />
-              {copiedAccessCode ? "Скопировано" : "Скопировать код"}
+              {copiedAccessCode ? "Скопировано" : "Скопировать пароль"}
             </button>
 
             <button
@@ -1734,13 +1761,19 @@ function CrmImportPanel({
           <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 text-sm text-slate-600">
             <input
               type="checkbox"
-              checked={archiveMissing}
+              checked={archiveMissing && preview.hasStableIds}
+              disabled={!preview.hasStableIds}
               onChange={(event) => onArchiveMissingChange(event.target.checked)}
-              className="mt-1 h-4 w-4 rounded border-slate-300 text-[#ea6a00] focus:ring-[#ea6a00]"
+              className="mt-1 h-4 w-4 rounded border-slate-300 text-[#ea6a00] focus:ring-[#ea6a00] disabled:cursor-not-allowed disabled:opacity-50"
             />
             <span>
               Архивировать пользователей, которых нет в этой выгрузке. Включайте
               только если файл точно полный, а не частичная выборка.
+              {!preview.hasStableIds ? (
+                <span className="mt-1 block text-[#b95200]">
+                  В текущем файле нет CRM ID, поэтому архивация отключена для защиты прогресса пользователей.
+                </span>
+              ) : null}
             </span>
           </label>
         </div>
